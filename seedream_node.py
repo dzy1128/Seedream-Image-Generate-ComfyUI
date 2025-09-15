@@ -23,7 +23,7 @@ class SeedreamImageGenerate:
                     "placeholder": "Enter your image generation prompt here..."
                 }),
                 "image1": ("IMAGE",),
-                "model": (["doubao-seedream-4-0-250828", "doubao-seedream-4-0-preview", "doubao-seedream-3-0"], {
+                "model": (["doubao-seedream-4-0-250828"], {
                     "default": "doubao-seedream-4-0-250828"
                 }),
                 "aspect_ratio": (["1:1", "2:3", "3:2", "4:3", "3:4", "16:9", "9:16", "21:9"], {
