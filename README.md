@@ -6,7 +6,11 @@
 使用示例：添加节点界面截图
 ![节点界面](images/screenshots/node-interface.png)
 -->
-
+## 激活模型
+1.访问火山模型广场：https://console.volcengine.com/ark/region:ark+cn-beijing/model?vendor=Bytedance&view=DEFAULT_VIEW  
+2.在<图片生成>下面找到Seedream-4.0模型，鼠标悬浮在模型上面，会出现以下界面，然后点击API接入：
+images/screenshots/Seedream-4.0.png
+3.选择你的API_KEY，点击<选择使用>，然后点击开通模型。
 ## 功能特性
 
 - 🎨 **多模型支持**: 支持doubao-seedream系列模型
