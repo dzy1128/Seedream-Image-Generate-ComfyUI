@@ -29,7 +29,6 @@ pip install volcengine-python-sdk[ark]
 ```bash
 export ARK_API_KEY="your_api_key_here"
 ```
-**注意**: API Key必须通过环境变量设置，节点不支持在界面中输入API Key。
 
 ### 安装节点
 1. 将此文件夹复制到ComfyUI的`custom_nodes`目录
@@ -103,45 +102,9 @@ export ARK_API_KEY="your_api_key_here"
 
 ## 故障排除
 
-### 1. API Key认证错误 (401 Unauthorized)
-
-**症状**: 出现 "401 Unauthorized" 或 "AuthenticationError" 错误
-
-**解决步骤**:
-1. **检查环境变量设置**:
-   ```bash
-   echo $ARK_API_KEY
-   ```
-   如果为空，设置环境变量：
-   ```bash
-   export ARK_API_KEY="your_api_key_here"
-   ```
-
-2. **验证API Key格式**:
-   - 确保从火山引擎控制台完整复制API Key
-   - 去除前后空格
-   - 确保没有换行符或特殊字符
-
-3. **运行测试脚本**:
-   ```bash
-   cd custom_nodes/Seedream-Image-Generate-ComfyUI
-   python test_api_key.py
-   ```
-
-4. **检查权限和配额**:
-   - 确认API Key有图像生成权限
-   - 检查账户配额是否充足
-   - 验证服务是否已开通
-
-5. **重启ComfyUI**:
-   - 设置环境变量后重启ComfyUI
-   - 确保新的环境变量生效
-
-### 2. 其他常见问题
-
-1. **网络错误**: 确保网络连接正常，可以访问火山引擎服务
-2. **图像加载失败**: 检查输入图像格式是否支持
-3. **生成失败**: 查看控制台日志获取详细错误信息
+1. **API Key错误**: 确保正确设置ARK_API_KEY环境变量
+2. **网络错误**: 确保网络连接正常，可以访问火山引擎服务
+3. **图像加载失败**: 检查输入图像格式是否支持
 4. **依赖包问题**: 确保已安装 `pip install 'volcengine-python-sdk[ark]'`
 
 ## 支持与反馈

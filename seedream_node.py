@@ -98,8 +98,6 @@ class SeedreamImageGenerate:
         try:
             if use_local_images:
                 # 使用官方支持的Base64格式
-                print("📤 转换本地图像为Base64格式...")
-                
                 try:
                     import base64
                     
@@ -116,16 +114,11 @@ class SeedreamImageGenerate:
                     img_base64 = base64.b64encode(img_bytes).decode('utf-8')
                     
                     # 按照官方文档格式：data:image/png;base64,<base64_image>
-                    # 注意图片格式需要小写
                     data_url = f"data:image/png;base64,{img_base64}"
-                    
-                    print(f"✅ Base64转换成功 (长度: {len(data_url)} 字符)")
-                    print(f"📋 格式: data:image/png;base64,{img_base64[:50]}...")
                     
                     return data_url
                     
                 except Exception as e:
-                    print(f"❌ Base64转换失败: {e}")
                     # 转换失败时回退到示例图像
                     return self._get_example_image_url()
             
@@ -133,7 +126,6 @@ class SeedreamImageGenerate:
             return self._get_example_image_url()
             
         except Exception as e:
-            print(f"❌ 图像处理失败: {e}")
             return self._get_example_image_url()
     
     def _get_example_image_url(self):
@@ -144,9 +136,7 @@ class SeedreamImageGenerate:
         ]
         
         import random
-        selected_url = random.choice(example_urls)
-        print(f"📷 使用示例图像: {selected_url}")
-        return selected_url
+        return random.choice(example_urls)
     
     def aspect_ratio_to_size(self, aspect_ratio):
         """Convert aspect ratio to size parameter"""
@@ -172,39 +162,20 @@ class SeedreamImageGenerate:
                 image = image.convert('RGB')
             return self.pil_to_tensor(image)
         except Exception as e:
-            print(f"Error downloading image from {url}: {e}")
             # Return a black placeholder image
             placeholder = Image.new('RGB', (512, 512), color='black')
             return self.pil_to_tensor(placeholder)
     
     def initialize_client(self, base_url):
         """Initialize the Ark client"""
-        # Get API key from environment variable
         api_key = os.environ.get("ARK_API_KEY")
         
         if not api_key:
             raise ValueError("API Key is required. Please set ARK_API_KEY environment variable.")
         
-        # Clean and validate API key
-        api_key = api_key.strip()
-        if not api_key:
-            raise ValueError("API Key is empty after cleaning. Please check ARK_API_KEY environment variable.")
-        
-        # Debug info (masked for security)
-        print(f"🔑 API Key length: {len(api_key)} characters")
-        print(f"🔑 API Key preview: {api_key[:8]}{'*' * max(0, len(api_key) - 8)}")
-        print(f"🌐 Base URL: {base_url}")
-        
-        # Additional format checks
-        if len(api_key) < 10:
-            print("⚠️  Warning: API Key seems very short, please verify")
-        
-        if ' ' in api_key or '\n' in api_key or '\t' in api_key:
-            print("⚠️  Warning: API Key contains whitespace characters")
-        
         self.client = Ark(
             base_url=base_url,
-            api_key=api_key
+            api_key=api_key.strip()
         )
     
     def generate_images(self, prompt, image1, model, aspect_ratio, sequential_image_generation, 
@@ -231,7 +202,6 @@ class SeedreamImageGenerate:
             
             # Convert input images to URLs
             image_urls = []
-            print(f"📊 处理 {len(input_images)} 张输入图像...")
             
             for i, img_tensor in enumerate(input_images):
                 # Convert tensor to PIL
@@ -239,14 +209,12 @@ class SeedreamImageGenerate:
                 # 转换为API支持的格式
                 url = self.convert_image_to_supported_format(pil_img, use_local_images)
                 image_urls.append(url)
-                print(f"📷 图像 {i+1}: {url[:100]}{'...' if len(url) > 100 else ''}")
                 
             if not image_urls:
                 # 如果没有图像，使用默认示例
                 image_urls = [
                     "https://ark-project.tos-cn-beijing.volces.com/doc_image/seedream4_imagesToimages_1.png"
                 ]
-                print("📷 使用默认示例图像")
             
             # Convert aspect ratio to size
             size = self.aspect_ratio_to_size(aspect_ratio)
@@ -255,9 +223,6 @@ class SeedreamImageGenerate:
             generation_options = SequentialImageGenerationOptions(max_images=max_images)
             
             # Generate images
-            print(f"Generating images with prompt: {prompt}")
-            print(f"Model: {model}, Size: {size}, Max images: {max_images}")
-            
             images_response = self.client.images.generate(
                 model=model,
                 prompt=prompt,
@@ -298,8 +263,6 @@ class SeedreamImageGenerate:
                 if hasattr(image_data, 'finish_reason') and image_data.finish_reason:
                     result_info.append(f"   ✅ 完成原因: {image_data.finish_reason}")
                 
-                print(f"Processing image {i+1}: URL: {image_data.url}, Size: {image_data.size}")
-                
                 if response_format == "url":
                     # Download image from URL
                     tensor = self.download_image_from_url(image_data.url)
@@ -337,45 +300,6 @@ class SeedreamImageGenerate:
             
         except Exception as e:
             error_msg = str(e)
-            print(f"❌ Error generating images: {error_msg}")
-            
-            # Check for specific authentication errors
-            if any(keyword in error_msg for keyword in ["401", "Unauthorized", "AuthenticationError", "API key format"]):
-                print("\n🔐 API认证错误诊断:")
-                print("=" * 50)
-                
-                # Check environment variable
-                env_api_key = os.environ.get("ARK_API_KEY")
-                if not env_api_key:
-                    print("❌ ARK_API_KEY 环境变量未设置")
-                    print("💡 解决方案:")
-                    print("   export ARK_API_KEY='your_api_key_here'")
-                    print("   然后重启ComfyUI")
-                else:
-                    print(f"✅ ARK_API_KEY 环境变量已设置")
-                    print(f"📏 长度: {len(env_api_key)} 字符")
-                    print(f"🔍 预览: {env_api_key[:8]}{'*' * max(0, len(env_api_key) - 8)}")
-                    
-                    # Format validation
-                    clean_key = env_api_key.strip()
-                    if len(clean_key) != len(env_api_key):
-                        print("⚠️  API Key包含前后空格")
-                    
-                    if len(clean_key) < 20:
-                        print("⚠️  API Key可能太短")
-                    
-                    if any(char in env_api_key for char in [' ', '\n', '\t']):
-                        print("⚠️  API Key包含空白字符")
-                
-                print("\n📋 请检查以下事项:")
-                print("1. 从火山引擎控制台重新复制API Key")
-                print("2. 确保API Key有图像生成权限")  
-                print("3. 检查账户配额是否充足")
-                print("4. 验证服务地区是否正确")
-                print("5. 尝试重新生成API Key")
-                
-            elif "network" in error_msg.lower() or "connection" in error_msg.lower():
-                print("🌐 网络连接问题，请检查网络设置")
             
             # Return a placeholder error image with error text
             error_img = Image.new('RGB', (512, 512), color='red')
