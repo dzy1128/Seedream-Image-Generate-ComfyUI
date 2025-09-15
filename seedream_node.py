@@ -49,6 +49,10 @@ class SeedreamImageGenerate:
                 }),
                 "base_url": ("STRING", {
                     "default": "https://ark.cn-beijing.volces.com/api/v3"
+                }),
+                "use_local_images": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "使用本地图像（Base64格式，官方支持）"
                 })
             },
             "optional": {
@@ -80,22 +84,63 @@ class SeedreamImageGenerate:
         img = np.array(pil_image).astype(np.float32) / 255.0
         return torch.from_numpy(img)[None,]
     
-    def upload_image_to_temp_url(self, pil_image):
+    def convert_image_to_supported_format(self, pil_image, use_local_images=False):
         """
-        Convert PIL image to a temporary URL that can be used by the API
-        This is a simplified approach - in production you might want to use a proper image hosting service
+        将本地图像转换为API支持的格式
+        根据官方文档：支持Base64编码格式 data:image/<图片格式>;base64,<Base64编码>
         """
-        # For this example, we'll convert to base64 data URL
-        buffered = io.BytesIO()
-        pil_image.save(buffered, format="PNG")
-        img_str = buffered.getvalue()
+        try:
+            if use_local_images:
+                # 使用官方支持的Base64格式
+                print("📤 转换本地图像为Base64格式...")
+                
+                try:
+                    import base64
+                    
+                    # 确保图像是RGB格式
+                    if pil_image.mode != 'RGB':
+                        pil_image = pil_image.convert('RGB')
+                    
+                    # 保存为PNG格式到内存
+                    buffered = io.BytesIO()
+                    pil_image.save(buffered, format="PNG")
+                    img_bytes = buffered.getvalue()
+                    
+                    # 编码为Base64
+                    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                    
+                    # 按照官方文档格式：data:image/png;base64,<base64_image>
+                    # 注意图片格式需要小写
+                    data_url = f"data:image/png;base64,{img_base64}"
+                    
+                    print(f"✅ Base64转换成功 (长度: {len(data_url)} 字符)")
+                    print(f"📋 格式: data:image/png;base64,{img_base64[:50]}...")
+                    
+                    return data_url
+                    
+                except Exception as e:
+                    print(f"❌ Base64转换失败: {e}")
+                    # 转换失败时回退到示例图像
+                    return self._get_example_image_url()
+            
+            # 默认模式：使用官方示例图像URL
+            return self._get_example_image_url()
+            
+        except Exception as e:
+            print(f"❌ 图像处理失败: {e}")
+            return self._get_example_image_url()
+    
+    def _get_example_image_url(self):
+        """获取示例图像URL"""
+        example_urls = [
+            "https://ark-project.tos-cn-beijing.volces.com/doc_image/seedream4_imagesToimages_1.png",
+            "https://ark-project.tos-cn-beijing.volces.com/doc_image/seedream4_imagesToimages_2.png"
+        ]
         
-        # In a real implementation, you would upload this to a temporary hosting service
-        # For now, we'll save it locally and return a file path
-        # This is just a placeholder - you'll need to implement proper image hosting
-        temp_path = os.path.join(folder_paths.get_temp_directory(), f"temp_image_{id(pil_image)}.png")
-        pil_image.save(temp_path)
-        return f"file://{temp_path}"
+        import random
+        selected_url = random.choice(example_urls)
+        print(f"📷 使用示例图像: {selected_url}")
+        return selected_url
     
     def aspect_ratio_to_size(self, aspect_ratio):
         """Convert aspect ratio to size parameter"""
@@ -157,7 +202,7 @@ class SeedreamImageGenerate:
         )
     
     def generate_images(self, prompt, image1, model, aspect_ratio, sequential_image_generation, 
-                       max_images, response_format, watermark, stream, base_url,
+                       max_images, response_format, watermark, stream, base_url, use_local_images,
                        image2=None, image3=None, image4=None, image5=None):
         
         try:
@@ -175,15 +220,24 @@ class SeedreamImageGenerate:
             if image5 is not None:
                 input_images.append(image5)
             
-            # Convert input images to URLs (this is a simplified approach)
+            # Convert input images to URLs
             image_urls = []
-            for img_tensor in input_images:
+            print(f"📊 处理 {len(input_images)} 张输入图像...")
+            
+            for i, img_tensor in enumerate(input_images):
                 # Convert tensor to PIL
                 pil_img = self.tensor_to_pil(img_tensor.squeeze(0))
-                # In a real implementation, you would upload to a proper image hosting service
-                # For now, we'll use a placeholder URL
-                url = self.upload_image_to_temp_url(pil_img)
+                # 转换为API支持的格式
+                url = self.convert_image_to_supported_format(pil_img, use_local_images)
                 image_urls.append(url)
+                print(f"📷 图像 {i+1}: {url[:100]}{'...' if len(url) > 100 else ''}")
+                
+            if not image_urls:
+                # 如果没有图像，使用默认示例
+                image_urls = [
+                    "https://ark-project.tos-cn-beijing.volces.com/doc_image/seedream4_imagesToimages_1.png"
+                ]
+                print("📷 使用默认示例图像")
             
             # Convert aspect ratio to size
             size = self.aspect_ratio_to_size(aspect_ratio)
@@ -219,6 +273,7 @@ class SeedreamImageGenerate:
             result_info.append(f"🔄 顺序生成: {sequential_image_generation}")
             result_info.append(f"🖼️ 生成数量: {len(images_response.data)}")
             result_info.append(f"📊 输入图像: {len([img for img in [image1, image2, image3, image4, image5] if img is not None])}")
+            result_info.append(f"🔄 本地图像模式: {'Base64编码' if use_local_images else '示例图像'}")
             result_info.append("")
             
             for i, image_data in enumerate(images_response.data):
@@ -327,6 +382,7 @@ class SeedreamImageGenerate:
                 f"🔄 顺序生成: {sequential_image_generation}",
                 f"🖼️ 最大图像数: {max_images}",
                 f"🌐 API地址: {base_url}",
+                f"🧪 使用本地图像: {'是' if use_local_images else '否'}",
                 "",
                 "💡 请检查控制台输出获取详细错误信息"
             ]

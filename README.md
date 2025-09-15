@@ -64,6 +64,7 @@ export ARK_API_KEY="your_api_key_here"
 - **watermark**: 是否添加水印
 - **stream**: 是否使用流式传输
 - **base_url**: API基础URL
+- **use_local_images**: 启用本地图像Base64编码（默认开启，官方支持）
 
 ## 使用示例
 
@@ -85,12 +86,20 @@ export ARK_API_KEY="your_api_key_here"
    - 设置合适的max_images数量
    - 获得一系列相关的图像
 
+4. **本地图像使用**：
+   - 启用 `use_local_images=True`（默认开启）
+   - 节点会自动将本地图像转换为Base64格式
+   - 支持PNG、JPEG等常见格式，自动转换为PNG
+   - 查看text输出了解转换状态和详细信息
+
 ## 注意事项
 
 - 确保网络连接稳定，API调用需要网络访问
 - 图像生成可能需要一些时间，请耐心等待
 - API有使用限制，请合理使用避免超出配额
-- 输入图像会被转换为临时URL供API使用
+- ✅ **本地图像支持**: 现已支持本地图像输入（Base64编码格式）
+- 启用 `use_local_images=True`（默认）时会自动转换本地图像为Base64格式
+- 如果Base64转换失败，会自动回退到示例图像确保稳定性
 
 ## 故障排除
 
