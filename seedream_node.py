@@ -59,9 +59,9 @@ class SeedreamImageGenerate:
             }
         }
     
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("images",)
-    OUTPUT_IS_LIST = (True,)
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("images", "text")
+    OUTPUT_IS_LIST = (True, False)
     FUNCTION = "generate_images"
     CATEGORY = "image/generation"
     
@@ -134,6 +134,23 @@ class SeedreamImageGenerate:
         if not api_key:
             raise ValueError("API Key is required. Please set ARK_API_KEY environment variable.")
         
+        # Clean and validate API key
+        api_key = api_key.strip()
+        if not api_key:
+            raise ValueError("API Key is empty after cleaning. Please check ARK_API_KEY environment variable.")
+        
+        # Debug info (masked for security)
+        print(f"🔑 API Key length: {len(api_key)} characters")
+        print(f"🔑 API Key preview: {api_key[:8]}{'*' * max(0, len(api_key) - 8)}")
+        print(f"🌐 Base URL: {base_url}")
+        
+        # Additional format checks
+        if len(api_key) < 10:
+            print("⚠️  Warning: API Key seems very short, please verify")
+        
+        if ' ' in api_key or '\n' in api_key or '\t' in api_key:
+            print("⚠️  Warning: API Key contains whitespace characters")
+        
         self.client = Ark(
             base_url=base_url,
             api_key=api_key
@@ -190,10 +207,32 @@ class SeedreamImageGenerate:
                 stream=stream
             )
             
-            # Process generated images
+            # Process generated images and collect information
             output_tensors = []
+            result_info = []
+            
+            # Collect basic generation info
+            result_info.append(f"🎨 生成信息:")
+            result_info.append(f"📝 提示词: {prompt}")
+            result_info.append(f"🔧 模型: {model}")
+            result_info.append(f"📐 宽高比: {aspect_ratio}")
+            result_info.append(f"🔄 顺序生成: {sequential_image_generation}")
+            result_info.append(f"🖼️ 生成数量: {len(images_response.data)}")
+            result_info.append(f"📊 输入图像: {len([img for img in [image1, image2, image3, image4, image5] if img is not None])}")
+            result_info.append("")
             
             for i, image_data in enumerate(images_response.data):
+                result_info.append(f"📷 图像 {i+1}:")
+                result_info.append(f"   🔗 URL: {image_data.url}")
+                result_info.append(f"   📏 尺寸: {image_data.size}")
+                
+                # Add any additional metadata if available
+                if hasattr(image_data, 'revised_prompt') and image_data.revised_prompt:
+                    result_info.append(f"   ✏️ 修订提示词: {image_data.revised_prompt}")
+                
+                if hasattr(image_data, 'finish_reason') and image_data.finish_reason:
+                    result_info.append(f"   ✅ 完成原因: {image_data.finish_reason}")
+                
                 print(f"Processing image {i+1}: URL: {image_data.url}, Size: {image_data.size}")
                 
                 if response_format == "url":
@@ -210,19 +249,91 @@ class SeedreamImageGenerate:
                         image = image.convert('RGB')
                     tensor = self.pil_to_tensor(image)
                     output_tensors.append(tensor)
+                
+                result_info.append("")
+            
+            # Add generation parameters info
+            result_info.append("⚙️ 生成参数:")
+            result_info.append(f"   🎯 响应格式: {response_format}")
+            result_info.append(f"   💧 水印: {'是' if watermark else '否'}")
+            result_info.append(f"   🌊 流式传输: {'是' if stream else '否'}")
+            result_info.append(f"   🌐 API地址: {base_url}")
             
             if not output_tensors:
                 # Return a placeholder if no images generated
                 placeholder = Image.new('RGB', (512, 512), color='black')
                 output_tensors = [self.pil_to_tensor(placeholder)]
+                result_info.append("⚠️ 未生成图像，返回占位符")
             
-            return (output_tensors,)
+            # Join all info into a single text output
+            text_output = "\n".join(result_info)
+            
+            return (output_tensors, text_output)
             
         except Exception as e:
-            print(f"Error generating images: {e}")
-            # Return a placeholder error image
+            error_msg = str(e)
+            print(f"❌ Error generating images: {error_msg}")
+            
+            # Check for specific authentication errors
+            if any(keyword in error_msg for keyword in ["401", "Unauthorized", "AuthenticationError", "API key format"]):
+                print("\n🔐 API认证错误诊断:")
+                print("=" * 50)
+                
+                # Check environment variable
+                env_api_key = os.environ.get("ARK_API_KEY")
+                if not env_api_key:
+                    print("❌ ARK_API_KEY 环境变量未设置")
+                    print("💡 解决方案:")
+                    print("   export ARK_API_KEY='your_api_key_here'")
+                    print("   然后重启ComfyUI")
+                else:
+                    print(f"✅ ARK_API_KEY 环境变量已设置")
+                    print(f"📏 长度: {len(env_api_key)} 字符")
+                    print(f"🔍 预览: {env_api_key[:8]}{'*' * max(0, len(env_api_key) - 8)}")
+                    
+                    # Format validation
+                    clean_key = env_api_key.strip()
+                    if len(clean_key) != len(env_api_key):
+                        print("⚠️  API Key包含前后空格")
+                    
+                    if len(clean_key) < 20:
+                        print("⚠️  API Key可能太短")
+                    
+                    if any(char in env_api_key for char in [' ', '\n', '\t']):
+                        print("⚠️  API Key包含空白字符")
+                
+                print("\n📋 请检查以下事项:")
+                print("1. 从火山引擎控制台重新复制API Key")
+                print("2. 确保API Key有图像生成权限")  
+                print("3. 检查账户配额是否充足")
+                print("4. 验证服务地区是否正确")
+                print("5. 尝试重新生成API Key")
+                
+            elif "network" in error_msg.lower() or "connection" in error_msg.lower():
+                print("🌐 网络连接问题，请检查网络设置")
+            
+            # Return a placeholder error image with error text
             error_img = Image.new('RGB', (512, 512), color='red')
-            return ([self.pil_to_tensor(error_img)],)
+            
+            # Create detailed error text output
+            error_text_parts = [
+                "❌ 图像生成失败",
+                "",
+                f"🔍 错误信息: {error_msg}",
+                "",
+                f"📝 提示词: {prompt}",
+                f"🔧 模型: {model}",
+                f"📐 宽高比: {aspect_ratio}",
+                f"🔄 顺序生成: {sequential_image_generation}",
+                f"🖼️ 最大图像数: {max_images}",
+                f"🌐 API地址: {base_url}",
+                "",
+                "💡 请检查控制台输出获取详细错误信息"
+            ]
+            
+            error_text = "\n".join(error_text_parts)
+            
+            return ([self.pil_to_tensor(error_img)], error_text)
 
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
