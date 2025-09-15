@@ -47,10 +47,6 @@ class SeedreamImageGenerate:
                 "stream": ("BOOLEAN", {
                     "default": False
                 }),
-                "api_key": ("STRING", {
-                    "default": "",
-                    "placeholder": "Enter your ARK API Key (or set ARK_API_KEY env var)"
-                }),
                 "base_url": ("STRING", {
                     "default": "https://ark.cn-beijing.volces.com/api/v3"
                 })
@@ -130,26 +126,26 @@ class SeedreamImageGenerate:
             placeholder = Image.new('RGB', (512, 512), color='black')
             return self.pil_to_tensor(placeholder)
     
-    def initialize_client(self, api_key, base_url):
+    def initialize_client(self, base_url):
         """Initialize the Ark client"""
-        # Use provided API key or environment variable
-        final_api_key = api_key if api_key.strip() else os.environ.get("ARK_API_KEY")
+        # Get API key from environment variable
+        api_key = os.environ.get("ARK_API_KEY")
         
-        if not final_api_key:
-            raise ValueError("API Key is required. Please provide it in the node or set ARK_API_KEY environment variable.")
+        if not api_key:
+            raise ValueError("API Key is required. Please set ARK_API_KEY environment variable.")
         
         self.client = Ark(
             base_url=base_url,
-            api_key=final_api_key
+            api_key=api_key
         )
     
     def generate_images(self, prompt, image1, model, aspect_ratio, sequential_image_generation, 
-                       max_images, response_format, watermark, stream, api_key, base_url,
+                       max_images, response_format, watermark, stream, base_url,
                        image2=None, image3=None, image4=None, image5=None):
         
         try:
             # Initialize client
-            self.initialize_client(api_key, base_url)
+            self.initialize_client(base_url)
             
             # Collect input images
             input_images = [image1]

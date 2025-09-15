@@ -24,10 +24,11 @@ pip install volcengine-python-sdk[ark]
 ### 获取API密钥
 1. 访问[火山引擎控制台](https://console.volcengine.com/)
 2. 开通ARK服务并获取API Key
-3. 设置环境变量或在节点中直接输入：
+3. 设置环境变量：
 ```bash
 export ARK_API_KEY="your_api_key_here"
 ```
+**注意**: API Key必须通过环境变量设置，节点不支持在界面中输入API Key。
 
 ### 安装节点
 1. 将此文件夹复制到ComfyUI的`custom_nodes`目录
@@ -53,7 +54,6 @@ export ARK_API_KEY="your_api_key_here"
 - **response_format**: 响应格式 (url/b64_json)
 - **watermark**: 是否添加水印
 - **stream**: 是否使用流式传输
-- **api_key**: API密钥（可选，优先使用环境变量）
 - **base_url**: API基础URL
 
 ## 使用示例
@@ -83,7 +83,7 @@ export ARK_API_KEY="your_api_key_here"
 
 ## 故障排除
 
-1. **API Key错误**: 检查环境变量或节点中的API Key设置
+1. **API Key错误**: 检查ARK_API_KEY环境变量设置
 2. **网络错误**: 确保网络连接正常，可以访问火山引擎服务
 3. **图像加载失败**: 检查输入图像格式是否支持
 4. **生成失败**: 查看控制台日志获取详细错误信息
