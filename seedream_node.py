@@ -53,7 +53,13 @@ class SeedreamImageGenerate:
                 "use_local_images": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "使用本地图像（Base64格式，官方支持）"
-                })
+                }),
+                "seed": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 2147483647,
+                    "step": 1
+                }),
             },
             "optional": {
                 "image2": ("IMAGE",),
