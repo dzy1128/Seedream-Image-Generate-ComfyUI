@@ -208,12 +208,15 @@ class SeedreamImageGenerate:
         )
     
     def generate_images(self, prompt, image1, model, aspect_ratio, sequential_image_generation, 
-                       max_images, response_format, watermark, stream, base_url, use_local_images,
+                       max_images, response_format, watermark, stream, base_url, use_local_images, seed,
                        image2=None, image3=None, image4=None, image5=None):
         
         try:
             # Initialize client
             self.initialize_client(base_url)
+            
+            # Note: seed parameter is available for workflow tracking but not sent to the API
+            # The Volcengine Seedream API doesn't currently support seed parameter
             
             # Collect input images
             input_images = [image1]
@@ -280,6 +283,7 @@ class SeedreamImageGenerate:
             result_info.append(f"🖼️ 生成数量: {len(images_response.data)}")
             result_info.append(f"📊 输入图像: {len([img for img in [image1, image2, image3, image4, image5] if img is not None])}")
             result_info.append(f"🔄 本地图像模式: {'Base64编码' if use_local_images else '示例图像'}")
+            result_info.append(f"🎲 种子值: {seed}")
             result_info.append("")
             
             for i, image_data in enumerate(images_response.data):
@@ -389,6 +393,7 @@ class SeedreamImageGenerate:
                 f"🖼️ 最大图像数: {max_images}",
                 f"🌐 API地址: {base_url}",
                 f"🧪 使用本地图像: {'是' if use_local_images else '否'}",
+                f"🎲 种子值: {seed}",
                 "",
                 "💡 请检查控制台输出获取详细错误信息"
             ]
