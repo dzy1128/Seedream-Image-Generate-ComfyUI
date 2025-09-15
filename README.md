@@ -2,6 +2,11 @@
 
 一个基于火山引擎豆包大模型Seedream API的ComfyUI自定义节点，用于高质量图像生成。
 
+<!-- 
+使用示例：添加节点界面截图
+![节点界面](images/screenshots/node-interface.png)
+-->
+
 ## 功能特性
 
 - 🎨 **多模型支持**: 支持doubao-seedream系列模型
@@ -67,6 +72,11 @@ export ARK_API_KEY="your_api_key_here"
 
 ## 使用示例
 
+<!-- 
+工作流程示例图片
+![工作流示例](images/workflow/basic-workflow.png)
+-->
+
 1. **基础图像生成**：
    - 连接一张图像到image1输入
    - 输入提示词："一个美丽的风景画"
@@ -74,6 +84,11 @@ export ARK_API_KEY="your_api_key_here"
    - 点击执行
    - 查看images输出的生成图像
    - 查看text输出的详细信息
+
+<!-- 
+节点参数截图
+![节点参数](images/screenshots/node-parameters.png)
+-->
 
 2. **多图像输入**：
    - 连接多张图像到image1-image5
@@ -90,6 +105,15 @@ export ARK_API_KEY="your_api_key_here"
    - 节点会自动将本地图像转换为Base64格式
    - 支持PNG、JPEG等常见格式，自动转换为PNG
    - 查看text输出了解转换状态和详细信息
+
+<!-- 
+生成结果示例
+<div align="center">
+  <img src="images/examples/input-image.png" alt="输入图像" width="300">
+  <img src="images/examples/output-image.png" alt="生成结果" width="300">
+  <p><em>左：输入图像 | 右：生成结果</em></p>
+</div>
+-->
 
 ## 注意事项
 
