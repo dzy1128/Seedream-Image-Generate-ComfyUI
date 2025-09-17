@@ -26,7 +26,7 @@ class SeedreamImageGenerate:
                 "model": (["doubao-seedream-4-0-250828"], {
                     "default": "doubao-seedream-4-0-250828"
                 }),
-                "aspect_ratio": (["1:1", "2:3", "3:2", "4:3", "3:4", "16:9", "9:16", "21:9", "2K", "4K"], {
+                "aspect_ratio": (["1:1", "2:3", "3:2", "4:3", "3:4", "16:9", "9:16", "21:9", "2K", "3K", "4K"], {
                     "default": "1:1"
                 }),
                 "sequential_image_generation": (["auto", "enabled", "disabled"], {
@@ -151,6 +151,7 @@ class SeedreamImageGenerate:
             #"2:3": "1040x1560",
             "21:9": "3024x1296",
             "2K": "2K",
+            "3K": "2133x3200",
             "4K": "4K"
         }
         return ratio_map.get(aspect_ratio, "2048x2048")
