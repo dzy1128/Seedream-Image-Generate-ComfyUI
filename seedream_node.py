@@ -187,6 +187,18 @@ class SeedreamImageGenerate:
                        image2=None, image3=None, image4=None, image5=None):
         
         try:
+            # 验证必需的输入参数
+            if image1 is None:
+                raise ValueError("image1 参数是必需的，请确保上游节点已正确连接并执行完成")
+            
+            # 验证image1是否为有效的tensor
+            if not isinstance(image1, torch.Tensor):
+                raise ValueError(f"image1 必须是torch.Tensor类型，当前类型: {type(image1)}")
+            
+            # 验证tensor的形状
+            if len(image1.shape) < 3:
+                raise ValueError(f"image1 tensor形状无效: {image1.shape}，期望至少3维")
+            
             # Initialize client
             self.initialize_client(base_url)
             
@@ -308,12 +320,51 @@ class SeedreamImageGenerate:
             # Return a placeholder error image with error text
             error_img = Image.new('RGB', (512, 512), color='red')
             
-            # Create detailed error text output
+            # Create detailed error text output with specific troubleshooting
             error_text_parts = [
                 "❌ 图像生成失败",
                 "",
                 f"🔍 错误信息: {error_msg}",
-                "",
+                ""
+            ]
+            
+            # 根据错误类型提供具体的解决建议
+            if "image1 参数是必需的" in error_msg:
+                error_text_parts.extend([
+                    "🚨 输入图像问题:",
+                    "   • image1 输入未连接或上游节点未执行完成",
+                    "   • 请确保LoadImage或其他图像生成节点已正确连接",
+                    "   • 建议等待上游节点完全执行后再运行此节点",
+                    "   • 如果使用API调用，请确保所有依赖节点按正确顺序执行",
+                    ""
+                ])
+            elif "torch.Tensor" in error_msg:
+                error_text_parts.extend([
+                    "🚨 数据类型问题:",
+                    "   • 输入的image1不是有效的图像tensor",
+                    "   • 请检查上游节点是否正确输出图像数据",
+                    "   • 确保连接的是图像输出端口，而不是其他类型的输出",
+                    ""
+                ])
+            elif "Invalid image file" in error_msg:
+                error_text_parts.extend([
+                    "🚨 图像文件问题:",
+                    "   • 上游节点生成的临时图像文件无效或不存在",
+                    "   • 这通常是工作流执行顺序问题导致的",
+                    "   • 建议重新执行工作流，或检查文件路径权限",
+                    "   • 如果是API调用，请确保按依赖顺序执行节点",
+                    ""
+                ])
+            elif "API Key" in error_msg:
+                error_text_parts.extend([
+                    "🚨 API配置问题:",
+                    "   • ARK_API_KEY 环境变量未设置或无效",
+                    "   • 请设置环境变量: export ARK_API_KEY='your_api_key'",
+                    "   • 确保API Key有效且有足够的配额",
+                    ""
+                ])
+            
+            error_text_parts.extend([
                 f"📝 提示词: {prompt}",
                 f"🔧 模型: {model}",
                 f"📐 宽高比: {aspect_ratio}",
@@ -323,10 +374,22 @@ class SeedreamImageGenerate:
                 f"🧪 使用本地图像: {'是' if use_local_images else '否'}",
                 f"🎲 种子值: {seed}",
                 "",
-                "💡 请检查控制台输出获取详细错误信息"
-            ]
+                "💡 故障排除步骤:",
+                "   1. 检查所有节点连接是否正确",
+                "   2. 确保上游节点已完全执行",
+                "   3. 验证API Key和网络连接",
+                "   4. 查看ComfyUI控制台获取详细日志"
+            ])
             
             error_text = "\n".join(error_text_parts)
+            
+            # 打印详细错误信息到控制台以便调试
+            print(f"SeedreamImageGenerate 错误详情:")
+            print(f"  错误类型: {type(e).__name__}")
+            print(f"  错误信息: {error_msg}")
+            print(f"  image1 类型: {type(image1) if 'image1' in locals() else 'undefined'}")
+            if 'image1' in locals() and image1 is not None:
+                print(f"  image1 形状: {getattr(image1, 'shape', 'N/A')}")
             
             return ([self.pil_to_tensor(error_img)], error_text)
 
