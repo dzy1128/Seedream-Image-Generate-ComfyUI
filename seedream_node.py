@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from PIL import Image
 import io
+import time
 import folder_paths
 from volcenginesdkarkruntime import Ark
 from volcenginesdkarkruntime.types.images.images import SequentialImageGenerationOptions
@@ -57,8 +58,12 @@ class SeedreamImageGenerate:
                 "seed": ("INT", {
                     "default": 0,
                     "min": 0,
-                    "max": 2147483647,
+                    "max": 18446744073709551615,  # 支持64位整数
                     "step": 1
+                }),
+                "enable_auto_retry": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "启用自动重试机制，处理云端工作流的异步执行问题"
                 }),
             },
             "optional": {
@@ -77,6 +82,8 @@ class SeedreamImageGenerate:
     
     def __init__(self):
         self.client = None
+        self.max_retries = 3
+        self.retry_delay = 1.0  # 秒
     
     def tensor_to_pil(self, tensor):
         """Convert ComfyUI tensor to PIL Image"""
@@ -89,6 +96,51 @@ class SeedreamImageGenerate:
         """Convert PIL Image to ComfyUI tensor"""
         img = np.array(pil_image).astype(np.float32) / 255.0
         return torch.from_numpy(img)[None,]
+    
+    def validate_input_data(self, image1, retry_count=0):
+        """
+        验证输入数据的完整性，支持重试机制处理云端工作流的异步特性
+        """
+        max_retries = 3
+        
+        # 基本验证
+        if image1 is None:
+            if retry_count < max_retries:
+                print(f"输入验证失败 (尝试 {retry_count + 1}/{max_retries + 1}): image1 为 None，等待 {self.retry_delay} 秒后重试...")
+                time.sleep(self.retry_delay)
+                return False, "image1_none"
+            else:
+                raise ValueError("image1 参数是必需的，请确保上游节点已正确连接并执行完成")
+        
+        # 检查tensor类型
+        if not isinstance(image1, torch.Tensor):
+            if retry_count < max_retries:
+                print(f"输入验证失败 (尝试 {retry_count + 1}/{max_retries + 1}): image1 类型错误 {type(image1)}，等待 {self.retry_delay} 秒后重试...")
+                time.sleep(self.retry_delay)
+                return False, "image1_type"
+            else:
+                raise ValueError(f"image1 必须是torch.Tensor类型，当前类型: {type(image1)}")
+        
+        # 检查tensor形状
+        if len(image1.shape) < 3:
+            if retry_count < max_retries:
+                print(f"输入验证失败 (尝试 {retry_count + 1}/{max_retries + 1}): image1 形状无效 {image1.shape}，等待 {self.retry_delay} 秒后重试...")
+                time.sleep(self.retry_delay)
+                return False, "image1_shape"
+            else:
+                raise ValueError(f"image1 tensor形状无效: {image1.shape}，期望至少3维")
+        
+        # 检查tensor数据质量 - 避免全零或无效数据
+        if torch.all(image1 == 0) or torch.isnan(image1).any():
+            if retry_count < max_retries:
+                print(f"输入验证失败 (尝试 {retry_count + 1}/{max_retries + 1}): image1 数据质量问题（全零或包含NaN），等待 {self.retry_delay} 秒后重试...")
+                time.sleep(self.retry_delay)
+                return False, "image1_quality"
+            else:
+                print("警告: image1 包含异常数据，但将继续执行...")
+        
+        print(f"✅ 输入验证通过: image1 形状 {image1.shape}, 数据类型 {image1.dtype}")
+        return True, "success"
     
     def convert_image_to_supported_format(self, pil_image, use_local_images=False):
         """
@@ -183,26 +235,65 @@ class SeedreamImageGenerate:
         )
     
     def generate_images(self, prompt, image1, model, aspect_ratio, sequential_image_generation, 
-                       max_images, response_format, watermark, stream, base_url, use_local_images, seed,
+                       max_images, response_format, watermark, stream, base_url, use_local_images, seed, enable_auto_retry,
                        image2=None, image3=None, image4=None, image5=None):
         
+        # 根据用户设置决定是否使用重试机制
+        max_attempts = self.max_retries + 1 if enable_auto_retry else 1
+        
+        for retry_count in range(max_attempts):
+            try:
+                # 使用智能验证机制验证输入数据
+                is_valid, error_type = self.validate_input_data(image1, retry_count)
+                
+                if not is_valid:
+                    if enable_auto_retry and retry_count < self.max_retries:
+                        # 如果启用重试且还有重试机会，继续下一次循环
+                        continue
+                    else:
+                        # 最终失败，让validate_input_data抛出异常
+                        self.validate_input_data(image1, retry_count)
+                
+                # 验证通过，继续执行
+                if retry_count > 0 and enable_auto_retry:
+                    print(f"✅ 重试成功！开始执行图像生成 (尝试 {retry_count + 1}/{max_attempts})")
+                    print("💡 提示：如果经常需要重试，建议在工作流中添加适当的延迟或确保上游节点完全执行后再触发此节点")
+                else:
+                    print(f"🚀 开始执行图像生成")
+                    
+                return self._execute_generation(prompt, image1, model, aspect_ratio, sequential_image_generation, 
+                                              max_images, response_format, watermark, stream, base_url, use_local_images, seed, enable_auto_retry,
+                                              image2, image3, image4, image5)
+                
+            except Exception as e:
+                if enable_auto_retry and retry_count < self.max_retries:
+                    print(f"执行失败 (尝试 {retry_count + 1}/{max_attempts}): {str(e)}")
+                    print(f"等待 {self.retry_delay} 秒后重试...")
+                    time.sleep(self.retry_delay)
+                    continue
+                else:
+                    # 最后一次重试也失败了，或者没有启用重试，抛出异常
+                    raise e
+    
+    def _execute_generation(self, prompt, image1, model, aspect_ratio, sequential_image_generation, 
+                           max_images, response_format, watermark, stream, base_url, use_local_images, seed, enable_auto_retry,
+                           image2=None, image3=None, image4=None, image5=None):
+        """
+        实际执行图像生成的核心逻辑
+        """
         try:
-            # 验证必需的输入参数
-            if image1 is None:
-                raise ValueError("image1 参数是必需的，请确保上游节点已正确连接并执行完成")
             
-            # 验证image1是否为有效的tensor
-            if not isinstance(image1, torch.Tensor):
-                raise ValueError(f"image1 必须是torch.Tensor类型，当前类型: {type(image1)}")
-            
-            # 验证tensor的形状
-            if len(image1.shape) < 3:
-                raise ValueError(f"image1 tensor形状无效: {image1.shape}，期望至少3维")
+            # 标准化seed参数 - 将大的seed值映射到有效范围内
+            normalized_seed = seed
+            if seed > 2147483647:
+                # 使用模运算将大seed值映射到有效范围
+                normalized_seed = seed % 2147483647
+                print(f"原始seed值 {seed} 被标准化为 {normalized_seed}")
             
             # Initialize client
             self.initialize_client(base_url)
             
-            # Note: seed parameter is available for workflow tracking but not sent to the API
+            # Note: normalized_seed parameter is available for workflow tracking but not sent to the API
             # The Volcengine Seedream API doesn't currently support seed parameter
             
             # Collect input images
@@ -264,7 +355,8 @@ class SeedreamImageGenerate:
             result_info.append(f"🖼️ 生成数量: {len(images_response.data)}")
             result_info.append(f"📊 输入图像: {len([img for img in [image1, image2, image3, image4, image5] if img is not None])}")
             result_info.append(f"🔄 本地图像模式: {'Base64编码' if use_local_images else '示例图像'}")
-            result_info.append(f"🎲 种子值: {seed}")
+            result_info.append(f"🎲 种子值: {normalized_seed}" + (f" (原始: {seed})" if seed != normalized_seed else ""))
+            result_info.append(f"⚡ 执行状态: 成功 (自动重试: {'启用' if enable_auto_retry else '禁用'})")
             result_info.append("")
             
             for i, image_data in enumerate(images_response.data):
@@ -317,6 +409,11 @@ class SeedreamImageGenerate:
         except Exception as e:
             error_msg = str(e)
             
+            # 确保normalized_seed在错误处理时也可用
+            normalized_seed = seed
+            if seed > 2147483647:
+                normalized_seed = seed % 2147483647
+            
             # Return a placeholder error image with error text
             error_img = Image.new('RGB', (512, 512), color='red')
             
@@ -349,10 +446,17 @@ class SeedreamImageGenerate:
             elif "Invalid image file" in error_msg:
                 error_text_parts.extend([
                     "🚨 图像文件问题:",
-                    "   • 上游节点生成的临时图像文件无效或不存在",
-                    "   • 这通常是工作流执行顺序问题导致的",
-                    "   • 建议重新执行工作流，或检查文件路径权限",
-                    "   • 如果是API调用，请确保按依赖顺序执行节点",
+                    "   • 上游LoadImage节点的图像文件无效或不存在",
+                    "   • 常见原因:",
+                    "     - 文件路径格式错误（如：client:syai-prod/...）",
+                    "     - 临时文件还未生成完成",
+                    "     - 文件权限或网络问题",
+                    "     - 工作流执行顺序问题",
+                    "   • 解决方案:",
+                    "     1. 检查LoadImage节点的输入路径是否正确",
+                    "     2. 确保使用本地文件路径而非URL格式",
+                    "     3. 等待上游节点完全执行后再运行",
+                    "     4. 检查文件是否存在且可读",
                     ""
                 ])
             elif "API Key" in error_msg:
@@ -361,6 +465,15 @@ class SeedreamImageGenerate:
                     "   • ARK_API_KEY 环境变量未设置或无效",
                     "   • 请设置环境变量: export ARK_API_KEY='your_api_key'",
                     "   • 确保API Key有效且有足够的配额",
+                    ""
+                ])
+            elif "bigger than max" in error_msg and "seed" in error_msg:
+                error_text_parts.extend([
+                    "🚨 Seed值溢出问题:",
+                    f"   • 原始seed值 {seed} 超过了系统支持的最大值",
+                    f"   • 已自动标准化为: {normalized_seed}",
+                    "   • 这不会影响图像生成质量，只是用于工作流跟踪",
+                    "   • 建议使用较小的seed值以避免此警告",
                     ""
                 ])
             
@@ -372,7 +485,7 @@ class SeedreamImageGenerate:
                 f"🖼️ 最大图像数: {max_images}",
                 f"🌐 API地址: {base_url}",
                 f"🧪 使用本地图像: {'是' if use_local_images else '否'}",
-                f"🎲 种子值: {seed}",
+                f"🎲 种子值: {normalized_seed}" + (f" (原始: {seed})" if seed != normalized_seed else ""),
                 "",
                 "💡 故障排除步骤:",
                 "   1. 检查所有节点连接是否正确",
