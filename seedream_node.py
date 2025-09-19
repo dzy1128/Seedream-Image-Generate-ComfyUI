@@ -204,7 +204,7 @@ class SeedreamImageGenerate:
             "21:9": "3024x1296",
             "2K": "2K",
             "3K": "2133x3200",
-            "3.5K": "4400x2933",
+            "3.5K": "2933x4400",
             "4K": "4K"
         }
         return ratio_map.get(aspect_ratio, "2048x2048")
