@@ -235,25 +235,26 @@ class SeedreamImageGenerate:
             api_key=api_key.strip()
         )
     
-    def generate_images(self, prompt, image1, model, aspect_ratio, sequential_image_generation, 
+    def generate_images(self, prompt, model, aspect_ratio, sequential_image_generation, 
                        max_images, response_format, watermark, stream, base_url, use_local_images, seed, enable_auto_retry,
-                       image2=None, image3=None, image4=None, image5=None):
+                       image1=None, image2=None, image3=None, image4=None, image5=None):
         
         # 根据用户设置决定是否使用重试机制
         max_attempts = self.max_retries + 1 if enable_auto_retry else 1
         
         for retry_count in range(max_attempts):
             try:
-                # 使用智能验证机制验证输入数据
-                is_valid, error_type = self.validate_input_data(image1, retry_count)
-                
-                if not is_valid:
-                    if enable_auto_retry and retry_count < self.max_retries:
-                        # 如果启用重试且还有重试机会，继续下一次循环
-                        continue
-                    else:
-                        # 最终失败，让validate_input_data抛出异常
-                        self.validate_input_data(image1, retry_count)
+                # 使用智能验证机制验证输入数据（如果image1存在的话）
+                if image1 is not None:
+                    is_valid, error_type = self.validate_input_data(image1, retry_count)
+                    
+                    if not is_valid:
+                        if enable_auto_retry and retry_count < self.max_retries:
+                            # 如果启用重试且还有重试机会，继续下一次循环
+                            continue
+                        else:
+                            # 最终失败，让validate_input_data抛出异常
+                            self.validate_input_data(image1, retry_count)
                 
                 # 验证通过，继续执行
                 if retry_count > 0 and enable_auto_retry:
@@ -262,9 +263,9 @@ class SeedreamImageGenerate:
                 else:
                     print(f"🚀 开始执行图像生成")
                     
-                return self._execute_generation(prompt, image1, model, aspect_ratio, sequential_image_generation, 
+                return self._execute_generation(prompt, model, aspect_ratio, sequential_image_generation, 
                                               max_images, response_format, watermark, stream, base_url, use_local_images, seed, enable_auto_retry,
-                                              image2, image3, image4, image5)
+                                              image1, image2, image3, image4, image5)
                 
             except Exception as e:
                 if enable_auto_retry and retry_count < self.max_retries:
@@ -276,9 +277,9 @@ class SeedreamImageGenerate:
                     # 最后一次重试也失败了，或者没有启用重试，抛出异常
                     raise e
     
-    def _execute_generation(self, prompt, image1, model, aspect_ratio, sequential_image_generation, 
+    def _execute_generation(self, prompt, model, aspect_ratio, sequential_image_generation, 
                            max_images, response_format, watermark, stream, base_url, use_local_images, seed, enable_auto_retry,
-                           image2=None, image3=None, image4=None, image5=None):
+                           image1=None, image2=None, image3=None, image4=None, image5=None):
         """
         实际执行图像生成的核心逻辑
         """
@@ -297,8 +298,10 @@ class SeedreamImageGenerate:
             # Note: normalized_seed parameter is available for workflow tracking but not sent to the API
             # The Volcengine Seedream API doesn't currently support seed parameter
             
-            # Collect input images
-            input_images = [image1]
+            # Collect input images - 现在所有图片都是可选的，可以不提供图片
+            input_images = []
+            if image1 is not None:
+                input_images.append(image1)
             if image2 is not None:
                 input_images.append(image2)
             if image3 is not None:
@@ -318,30 +321,32 @@ class SeedreamImageGenerate:
                 url = self.convert_image_to_supported_format(pil_img, use_local_images)
                 image_urls.append(url)
                 
-            if not image_urls:
-                # 如果没有图像，使用默认示例
-                image_urls = [
-                    "https://ark-project.tos-cn-beijing.volces.com/doc_image/seedream4_imagesToimages_1.png"
-                ]
-            
             # Convert aspect ratio to size
             size = self.aspect_ratio_to_size(aspect_ratio)
             
             # Prepare generation options
             generation_options = SequentialImageGenerationOptions(max_images=max_images)
             
-            # Generate images
-            images_response = self.client.images.generate(
-                model=model,
-                prompt=prompt,
-                image=image_urls,
-                size=size,
-                sequential_image_generation=sequential_image_generation,
-                sequential_image_generation_options=generation_options,
-                response_format=response_format,
-                watermark=watermark,
-                stream=stream
-            )
+            # Generate images - 根据是否有图片输入来决定参数
+            generate_params = {
+                "model": model,
+                "prompt": prompt,
+                "size": size,
+                "sequential_image_generation": sequential_image_generation,
+                "sequential_image_generation_options": generation_options,
+                "response_format": response_format,
+                "watermark": watermark,
+                "stream": stream
+            }
+            
+            # 只有在有图片输入时才添加image参数
+            if image_urls:
+                generate_params["image"] = image_urls
+                print(f"📸 使用 {len(image_urls)} 张输入图片进行生成")
+            else:
+                print(f"🎨 文生图模式：仅使用提示词生成图片（无输入图片）")
+            
+            images_response = self.client.images.generate(**generate_params)
             
             # Process generated images and collect information
             output_tensors = []
@@ -354,7 +359,8 @@ class SeedreamImageGenerate:
             result_info.append(f"📐 宽高比: {aspect_ratio}")
             result_info.append(f"🔄 顺序生成: {sequential_image_generation}")
             result_info.append(f"🖼️ 生成数量: {len(images_response.data)}")
-            result_info.append(f"📊 输入图像: {len([img for img in [image1, image2, image3, image4, image5] if img is not None])}")
+            input_image_count = len([img for img in [image1, image2, image3, image4, image5] if img is not None])
+            result_info.append(f"📊 输入图像: {input_image_count}张" + (" (文生图模式)" if input_image_count == 0 else " (图生图模式)"))
             result_info.append(f"🔄 本地图像模式: {'Base64编码' if use_local_images else '示例图像'}")
             result_info.append(f"🎲 种子值: {normalized_seed}" + (f" (原始: {seed})" if seed != normalized_seed else ""))
             result_info.append(f"⚡ 执行状态: 成功 (自动重试: {'启用' if enable_auto_retry else '禁用'})")
@@ -427,7 +433,7 @@ class SeedreamImageGenerate:
             ]
             
             # 根据错误类型提供具体的解决建议
-            if "image1 参数是必需的" in error_msg:
+            if "image1 参数是必需的" in error_msg or "至少需要提供一张输入图片" in error_msg:
                 error_text_parts.extend([
                     "🚨 输入图像问题:",
                     "   • image1 输入未连接或上游节点未执行完成",
