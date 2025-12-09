@@ -30,13 +30,15 @@ class SeedreamImageGenerate:
                     "default": "1:1"
                 }),
                 "sequential_image_generation": (["auto", "enabled", "disabled"], {
-                    "default": "auto"
+                    "default": "auto",
+                    "tooltip": "顺序生成模式：auto=自动，enabled=启用，disabled=禁用"
                 }),
                 "max_images": ("INT", {
                     "default": 1,
                     "min": 1,
                     "max": 10,
-                    "step": 1
+                    "step": 1,
+                    "tooltip": "sequential_image_generation_options.max_images - 最大生成图片数量（用于顺序生成）"
                 }),
                 "response_format": (["url", "b64_json"], {
                     "default": "url"
@@ -325,7 +327,10 @@ class SeedreamImageGenerate:
             size = self.aspect_ratio_to_size(aspect_ratio)
             
             # Prepare generation options
+            # 对应官方API的 sequential_image_generation_options 参数
+            # 格式: {"max_images": int}
             generation_options = SequentialImageGenerationOptions(max_images=max_images)
+            print(f"🔄 顺序生成选项: max_images={max_images}")
             
             # Generate images - 根据是否有图片输入来决定参数
             generate_params = {
@@ -358,6 +363,7 @@ class SeedreamImageGenerate:
             result_info.append(f"🔧 模型: {model}")
             result_info.append(f"📐 宽高比: {aspect_ratio}")
             result_info.append(f"🔄 顺序生成: {sequential_image_generation}")
+            result_info.append(f"   └─ max_images: {max_images} (sequential_image_generation_options)")
             result_info.append(f"🖼️ 生成数量: {len(images_response.data)}")
             input_image_count = len([img for img in [image1, image2, image3, image4, image5] if img is not None])
             result_info.append(f"📊 输入图像: {input_image_count}张" + (" (文生图模式)" if input_image_count == 0 else " (图生图模式)"))

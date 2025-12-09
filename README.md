@@ -50,12 +50,11 @@ export ARK_API_KEY="your_api_key_here"
 
 ### 必需参数
 - **prompt**: 图像生成提示词（支持中英文）
-- **image1**: 第一张输入图像（必需）
 - **model**: 选择生成模型
   - `doubao-seedream-4-0-250828` (默认)
   - `doubao-seedream-4-5-251128`
 - **aspect_ratio**: 图像宽高比
-  - 1:1 (2048x2048), 2:3 (1664x2496), 3:2 (2496x1664), 4:3 (2304x1728), 3:4 (1728x2304), 16:9 (2560x1440), 9:16 (1440x2560), 21:9 (3024x1296)
+  - 1:1 (2048x2048), 2:3 (1664x2496), 3:2 (2496x1664), 4:3 (2304x1728), 3:4 (1728x2304), 16:9 (2560x1440), 9:16 (1440x2560), 21:9 (3024x1296), 2K, 3K, 3.5K, 4K
 
 ### 输出参数
 - **images**: 生成的图像列表
@@ -66,14 +65,30 @@ export ARK_API_KEY="your_api_key_here"
   - 错误信息（如果生成失败）
 
 ### 可选参数
-- **image2-image5**: 额外的输入图像
-- **sequential_image_generation**: 顺序生成模式 (auto/enabled/disabled)
+
+#### 图像输入
+- **image1-image5**: 可选的输入图像（支持0-5张）
+  - 不提供图像时为**文生图**模式
+  - 提供图像时为**图生图**模式
+
+#### 顺序生成控制
+- **sequential_image_generation**: 顺序生成模式
+  - `auto` - 自动（默认）
+  - `enabled` - 启用
+  - `disabled` - 禁用
 - **max_images**: 最大生成图像数量 (1-10)
+  - 对应官方API的 `sequential_image_generation_options.max_images`
+  - 用于控制顺序生成时的图片数量
+  - 示例：设置为4时，API会返回最多4张图片
+
+#### 其他参数
 - **response_format**: 响应格式 (url/b64_json)
 - **watermark**: 是否添加水印
 - **stream**: 是否使用流式传输
 - **base_url**: API基础URL
 - **use_local_images**: 启用本地图像Base64编码（默认开启，官方支持）
+- **seed**: 种子值（用于工作流跟踪，支持大整数）
+- **enable_auto_retry**: 启用自动重试机制（默认开启，处理云端工作流异步问题）
 
 ## 使用示例
 
@@ -82,28 +97,35 @@ export ARK_API_KEY="your_api_key_here"
 ![工作流示例](images/workflow/basic-workflow.png)
 -->
 
-1. **基础图像生成**：
-   - 连接一张图像到image1输入
-   - 输入提示词："一个美丽的风景画"
-   - 选择合适的宽高比
+1. **文生图模式（纯提示词生成）**：
+   - 不连接任何图像输入
+   - 输入提示词："一个美丽的风景画，高清，4K"
+   - 选择合适的宽高比（如 16:9）
    - 点击执行
    - 查看images输出的生成图像
-   - 查看text输出的详细信息
+   - text输出会显示 "文生图模式"
+
+2. **图生图模式（基于图像生成）**：
+   - 连接1-5张图像到image1-image5
+   - 输入提示词："转换为油画风格"
+   - 选择合适的宽高比
+   - 点击执行
+   - text输出会显示 "图生图模式"
+
+3. **顺序生成（一次生成多张图片）**：
+   ```
+   sequential_image_generation: "enabled"
+   max_images: 4
+   ```
+   - 启用 `sequential_image_generation` 设置为 `enabled`
+   - 设置 `max_images` 为 4（对应官方API的 sequential_image_generation_options）
+   - 节点会一次返回最多4张相关的图像
+   - 适合需要多个变体的场景
 
 <!-- 
 节点参数截图
 ![节点参数](images/screenshots/node-parameters.png)
 -->
-
-2. **多图像输入**：
-   - 连接多张图像到image1-image5
-   - 使用描述性提示词
-   - 设置max_images控制输出数量
-
-3. **顺序生成**：
-   - 启用sequential_image_generation
-   - 设置合适的max_images数量
-   - 获得一系列相关的图像
 
 4. **本地图像使用**：
    - 启用 `use_local_images=True`（默认开启）
