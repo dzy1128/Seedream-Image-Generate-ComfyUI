@@ -364,21 +364,56 @@ class SeedreamImageGenerate:
             all_image_data = []
             if stream:
                 print(f"🌊 流式响应模式，正在收集所有图片...")
-                # 流式响应返回的是迭代器，需要遍历收集所有图片
-                for chunk in images_response:
-                    if hasattr(chunk, 'data'):
-                        for img_data in chunk.data:
-                            all_image_data.append(img_data)
-                            print(f"   ✅ 收到第 {len(all_image_data)} 张图片: {img_data.size if hasattr(img_data, 'size') else 'unknown'}")
-                print(f"📊 流式响应完成，共收集 {len(all_image_data)} 张图片")
+                try:
+                    # 流式响应返回的是迭代器，需要遍历收集所有图片
+                    chunk_count = 0
+                    for chunk in images_response:
+                        chunk_count += 1
+                        print(f"   📦 收到第 {chunk_count} 个chunk, 类型: {type(chunk)}")
+                        print(f"   📦 Chunk属性: {dir(chunk)}")
+                        
+                        if hasattr(chunk, 'data'):
+                            print(f"   ✓ Chunk有data属性，数据项数: {len(chunk.data)}")
+                            for img_data in chunk.data:
+                                all_image_data.append(img_data)
+                                print(f"   ✅ 收到第 {len(all_image_data)} 张图片: {img_data.size if hasattr(img_data, 'size') else 'unknown'}")
+                        else:
+                            print(f"   ⚠️ Chunk没有data属性")
+                            # 可能chunk本身就是image data
+                            if hasattr(chunk, 'url') or hasattr(chunk, 'b64_json'):
+                                all_image_data.append(chunk)
+                                print(f"   ✅ 直接收集chunk为图片: {len(all_image_data)}")
+                    
+                    print(f"📊 流式响应完成，共收到 {chunk_count} 个chunk，收集 {len(all_image_data)} 张图片")
+                except Exception as e:
+                    print(f"❌ 处理流式响应时出错: {type(e).__name__}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
             else:
                 # 非流式响应，直接使用data
+                print(f"📦 非流式响应模式")
+                print(f"   响应类型: {type(images_response)}")
+                print(f"   响应属性: {dir(images_response)}")
+                
                 if hasattr(images_response, 'data'):
                     all_image_data = images_response.data
                     print(f"📊 非流式响应，返回 {len(all_image_data)} 张图片")
+                else:
+                    print(f"⚠️ 响应没有data属性")
             
             if not all_image_data:
-                raise ValueError("API未返回任何图片数据")
+                error_detail = f"API未返回任何图片数据\n"
+                error_detail += f"  - stream模式: {stream}\n"
+                if stream:
+                    error_detail += f"  - 收到chunk数: {chunk_count}\n"
+                error_detail += f"  - 响应类型: {type(images_response)}\n"
+                error_detail += f"\n💡 可能的原因:\n"
+                error_detail += f"  1. API返回格式与预期不符\n"
+                error_detail += f"  2. 流式响应处理方式需要调整\n"
+                error_detail += f"  3. API参数配置问题\n"
+                error_detail += f"\n请查看上方的详细调试日志以确定具体原因"
+                raise ValueError(error_detail)
             
             # Process generated images and collect information
             output_tensors = []
