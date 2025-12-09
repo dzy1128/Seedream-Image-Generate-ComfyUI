@@ -142,10 +142,16 @@ export ARK_API_KEY="your_api_key_here"
    ```
    
    **说明**：
-   - `max_images` 参数会自动转换为 API 的 `sequential_image_generation_options.max_images`
-   - 节点会通过流式响应收集所有生成的图片
-   - 控制台会显示收集进度
+   - `max_images` 参数会通过SDK自动转换为 API 的 `sequential_image_generation_options`
+   - 内部使用 `SequentialImageGenerationOptions(max_images=N)` 类进行序列化
+   - 节点会通过流式响应收集所有生成的图片（会过滤掉无效的中间数据）
+   - 控制台会显示收集进度和有效图片数量
    - 适合需要多个变体的场景
+   
+   **重要提示**：
+   - 只有有效的图片（包含URL或b64_json）才会被收集
+   - 流式响应中的中间状态数据会被自动过滤
+   - 最终返回的图片数量可能小于 `max_images` 设置的值（取决于API实际生成的有效图片数）
 
 <!-- 
 节点参数截图
