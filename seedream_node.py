@@ -7,7 +7,6 @@ import io
 import time
 import folder_paths
 from volcenginesdkarkruntime import Ark
-from volcenginesdkarkruntime.types.images.images import SequentialImageGenerationOptions
 
 class SeedreamImageGenerate:
     """
@@ -328,10 +327,10 @@ class SeedreamImageGenerate:
             size = self.aspect_ratio_to_size(aspect_ratio)
             
             # Prepare generation options
-            # 对应官方API的 sequential_image_generation_options 参数
-            # 格式: {"max_images": int}
-            generation_options = SequentialImageGenerationOptions(max_images=max_images)
-            print(f"🔄 顺序生成选项: max_images={max_images}")
+            # 直接使用字典格式，对应官方API: {"max_images": int}
+            # 不使用SDK的SequentialImageGenerationOptions类，直接传字典
+            generation_options = {"max_images": max_images}
+            print(f"🔄 顺序生成选项: {generation_options}")
             
             # Generate images - 根据是否有图片输入来决定参数
             generate_params = {
@@ -355,8 +354,15 @@ class SeedreamImageGenerate:
             print(f"📤 发送API请求")
             print(f"   模型: {model}")
             print(f"   顺序生成: {sequential_image_generation}")
-            print(f"   max_images: {max_images}")
+            print(f"   顺序生成选项: {generation_options}")
             print(f"   stream: {stream}")
+            print(f"   图片输入数: {len(image_urls) if image_urls else 0}")
+            
+            # 打印完整的API参数（敏感信息已脱敏）
+            debug_params = generate_params.copy()
+            if 'image' in debug_params and isinstance(debug_params['image'], list):
+                debug_params['image'] = f"[{len(debug_params['image'])}张图片]"
+            print(f"📋 完整API参数: {debug_params}")
             
             images_response = self.client.images.generate(**generate_params)
             

@@ -117,27 +117,35 @@ export ARK_API_KEY="your_api_key_here"
    - text输出会显示 "图生图模式"
 
 3. **顺序生成（一次生成多张图片）**：
-   ```
-   sequential_image_generation: "enabled" 或 "auto"
-   max_images: 4
-   stream: True  ⚠️ 必须启用！
-   ```
-   - ⚠️ **关键配置**：必须启用 `stream=True` 才能生成多张图片
-   - 设置 `sequential_image_generation` 为 `enabled` 或 `auto`
-   - 设置 `max_images` 为 4（对应官方API的 sequential_image_generation_options）
-   - 节点会一次返回最多4张相关的图像
-   - 适合需要多个变体的场景
    
-   **示例配置（对应官方API）**：
+   ⚠️ **关键配置要求**：
+   - 必须启用 `stream = True`
+   - 设置 `max_images > 1`
+   - `sequential_image_generation` 设为 `"enabled"` 或 `"auto"`
+   
+   **配置示例**：
+   ```
+   sequential_image_generation: "auto"
+   max_images: 3
+   stream: True  ← 必须！
+   ```
+   
+   这会生成对应的API调用：
    ```json
    {
      "sequential_image_generation": "auto",
      "sequential_image_generation_options": {
-       "max_images": 5
+       "max_images": 3
      },
      "stream": true
    }
    ```
+   
+   **说明**：
+   - `max_images` 参数会自动转换为 API 的 `sequential_image_generation_options.max_images`
+   - 节点会通过流式响应收集所有生成的图片
+   - 控制台会显示收集进度
+   - 适合需要多个变体的场景
 
 <!-- 
 节点参数截图
