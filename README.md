@@ -7,7 +7,7 @@
 ![节点界面](images/screenshots/node-interface.png)
 -->
 ## 激活模型
-1. 访问![火山模型广场](https://console.volcengine.com/ark/region:ark+cn-beijing/model?vendor=Bytedance&view=DEFAULT_VIEW)
+1. 访问[火山模型广场](https://console.volcengine.com/ark/region:ark+cn-beijing/model?vendor=Bytedance&view=DEFAULT_VIEW)
 2. 在<图片生成>下面找到Seedream-4.0模型，鼠标悬浮在模型上面，会出现以下界面，然后点击API接入：
 
 ![Seedream-4.0模型激活](images/screenshots/Seedream-4.0.png)
