@@ -8,6 +8,7 @@ import time
 import folder_paths
 from volcenginesdkarkruntime import Ark
 from volcenginesdkarkruntime.types.images.images import SequentialImageGenerationOptions
+from volcenginesdkarkruntime.types.images.images import SequentialImageGenerationOptions
 
 class SeedreamImageGenerate:
     """
@@ -372,40 +373,61 @@ class SeedreamImageGenerate:
             
             # 处理流式响应
             all_image_data = []
+            event_count = 0  # 在外部初始化，用于错误报告
             if stream:
                 print(f"🌊 流式响应模式，正在收集所有图片...")
                 try:
-                    # 流式响应返回的是迭代器，需要遍历收集所有图片
-                    chunk_count = 0
-                    for chunk in images_response:
-                        chunk_count += 1
-                        print(f"   📦 收到第 {chunk_count} 个chunk, 类型: {type(chunk)}")
+                    # 根据官方示例，流式响应返回的是event对象迭代器
+                    # event有type属性来区分不同的事件类型
+                    for event in images_response:
+                        event_count += 1
                         
-                        if hasattr(chunk, 'data'):
-                            print(f"   ✓ Chunk有data属性，数据项数: {len(chunk.data)}")
-                            for img_data in chunk.data:
-                                # 验证图片数据有效性
-                                has_url = hasattr(img_data, 'url') and img_data.url is not None
-                                has_b64 = hasattr(img_data, 'b64_json') and img_data.b64_json is not None
-                                
-                                if has_url or has_b64:
-                                    all_image_data.append(img_data)
-                                    size_info = img_data.size if hasattr(img_data, 'size') else 'unknown'
-                                    url_preview = img_data.url[:50] + '...' if has_url and len(img_data.url) > 50 else (img_data.url if has_url else 'b64_json')
-                                    print(f"   ✅ 收到第 {len(all_image_data)} 张有效图片: {size_info}, URL: {url_preview}")
-                                else:
-                                    print(f"   ⚠️ 跳过无效图片数据: url={getattr(img_data, 'url', None)}, b64_json={'存在' if has_b64 else '不存在'}")
-                        else:
-                            print(f"   ⚠️ Chunk没有data属性")
-                            # 可能chunk本身就是image data
-                            has_url = hasattr(chunk, 'url') and chunk.url is not None
-                            has_b64 = hasattr(chunk, 'b64_json') and chunk.b64_json is not None
+                        # 跳过None事件
+                        if event is None:
+                            print(f"   📦 收到空event，跳过")
+                            continue
+                        
+                        print(f"   📦 收到第 {event_count} 个event, 类型: {type(event)}, event.type: {getattr(event, 'type', 'N/A')}")
+                        
+                        # 检查event类型
+                        if hasattr(event, 'type'):
+                            if event.type == "image_generation.partial_failed":
+                                # 部分生成失败
+                                error_msg = getattr(event, 'error', 'Unknown error')
+                                print(f"   ❌ 图片生成部分失败: {error_msg}")
+                                if hasattr(event, 'error') and event.error is not None:
+                                    if hasattr(event.error, 'code') and hasattr(event.error.code, 'equal'):
+                                        if event.error.code.equal("InternalServiceError"):
+                                            print(f"   🛑 内部服务错误，停止处理")
+                                            break
                             
-                            if has_url or has_b64:
-                                all_image_data.append(chunk)
-                                print(f"   ✅ 直接收集chunk为图片: {len(all_image_data)}")
+                            elif event.type == "image_generation.partial_succeeded":
+                                # 部分生成成功 - 这是每张图片生成后的事件
+                                if hasattr(event, 'error') and event.error is None:
+                                    if hasattr(event, 'url') and event.url:
+                                        # 收集图片URL
+                                        all_image_data.append(event)
+                                        size_info = getattr(event, 'size', 'unknown')
+                                        url_preview = event.url[:60] + '...' if len(event.url) > 60 else event.url
+                                        print(f"   ✅ 收到第 {len(all_image_data)} 张图片成功: Size={size_info}, URL={url_preview}")
+                                    elif hasattr(event, 'b64_json') and event.b64_json:
+                                        # Base64格式
+                                        all_image_data.append(event)
+                                        print(f"   ✅ 收到第 {len(all_image_data)} 张图片成功 (Base64格式)")
+                            
+                            elif event.type == "image_generation.completed":
+                                # 所有图片生成完成
+                                print(f"   🎉 所有图片生成完成!")
+                                if hasattr(event, 'usage'):
+                                    print(f"   📊 使用统计: {event.usage}")
+                        else:
+                            print(f"   ⚠️ Event没有type属性，尝试作为图片数据处理")
+                            # 兼容旧格式：可能是直接的图片数据
+                            if hasattr(event, 'url') and event.url:
+                                all_image_data.append(event)
+                                print(f"   ✅ 直接收集event为图片: {len(all_image_data)}")
                     
-                    print(f"📊 流式响应完成，共收到 {chunk_count} 个chunk，收集 {len(all_image_data)} 张有效图片")
+                    print(f"📊 流式响应完成，共收到 {event_count} 个event，收集 {len(all_image_data)} 张有效图片")
                 except Exception as e:
                     print(f"❌ 处理流式响应时出错: {type(e).__name__}: {e}")
                     import traceback
@@ -431,7 +453,7 @@ class SeedreamImageGenerate:
                 error_detail = f"API未返回任何图片数据\n"
                 error_detail += f"  - stream模式: {stream}\n"
                 if stream:
-                    error_detail += f"  - 收到chunk数: {chunk_count}\n"
+                    error_detail += f"  - 收到event数: {event_count}\n"
                 error_detail += f"  - 响应类型: {type(images_response)}\n"
                 error_detail += f"\n💡 可能的原因:\n"
                 error_detail += f"  1. API返回格式与预期不符\n"
