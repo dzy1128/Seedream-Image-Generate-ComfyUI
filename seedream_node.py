@@ -47,7 +47,8 @@ class SeedreamImageGenerate:
                     "default": False
                 }),
                 "stream": ("BOOLEAN", {
-                    "default": False
+                    "default": False,
+                    "tooltip": "流式传输模式 - 启用后与max_images配合可生成多张图片"
                 }),
                 "base_url": ("STRING", {
                     "default": "https://ark.cn-beijing.volces.com/api/v3"
@@ -351,7 +352,33 @@ class SeedreamImageGenerate:
             else:
                 print(f"🎨 文生图模式：仅使用提示词生成图片（无输入图片）")
             
+            print(f"📤 发送API请求")
+            print(f"   模型: {model}")
+            print(f"   顺序生成: {sequential_image_generation}")
+            print(f"   max_images: {max_images}")
+            print(f"   stream: {stream}")
+            
             images_response = self.client.images.generate(**generate_params)
+            
+            # 处理流式响应
+            all_image_data = []
+            if stream:
+                print(f"🌊 流式响应模式，正在收集所有图片...")
+                # 流式响应返回的是迭代器，需要遍历收集所有图片
+                for chunk in images_response:
+                    if hasattr(chunk, 'data'):
+                        for img_data in chunk.data:
+                            all_image_data.append(img_data)
+                            print(f"   ✅ 收到第 {len(all_image_data)} 张图片: {img_data.size if hasattr(img_data, 'size') else 'unknown'}")
+                print(f"📊 流式响应完成，共收集 {len(all_image_data)} 张图片")
+            else:
+                # 非流式响应，直接使用data
+                if hasattr(images_response, 'data'):
+                    all_image_data = images_response.data
+                    print(f"📊 非流式响应，返回 {len(all_image_data)} 张图片")
+            
+            if not all_image_data:
+                raise ValueError("API未返回任何图片数据")
             
             # Process generated images and collect information
             output_tensors = []
@@ -364,7 +391,7 @@ class SeedreamImageGenerate:
             result_info.append(f"📐 宽高比: {aspect_ratio}")
             result_info.append(f"🔄 顺序生成: {sequential_image_generation}")
             result_info.append(f"   └─ max_images: {max_images} (sequential_image_generation_options)")
-            result_info.append(f"🖼️ 生成数量: {len(images_response.data)}")
+            result_info.append(f"🖼️ 生成数量: {len(all_image_data)}")
             input_image_count = len([img for img in [image1, image2, image3, image4, image5] if img is not None])
             result_info.append(f"📊 输入图像: {input_image_count}张" + (" (文生图模式)" if input_image_count == 0 else " (图生图模式)"))
             result_info.append(f"🔄 本地图像模式: {'Base64编码' if use_local_images else '示例图像'}")
@@ -372,7 +399,7 @@ class SeedreamImageGenerate:
             result_info.append(f"⚡ 执行状态: 成功 (自动重试: {'启用' if enable_auto_retry else '禁用'})")
             result_info.append("")
             
-            for i, image_data in enumerate(images_response.data):
+            for i, image_data in enumerate(all_image_data):
                 result_info.append(f"📷 图像 {i+1}:")
                 result_info.append(f"   🔗 URL: {image_data.url}")
                 result_info.append(f"   📏 尺寸: {image_data.size}")
