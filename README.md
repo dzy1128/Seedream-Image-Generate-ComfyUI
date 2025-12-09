@@ -53,8 +53,7 @@ export ARK_API_KEY="your_api_key_here"
 - **image1**: 第一张输入图像（必需）
 - **model**: 选择生成模型
   - `doubao-seedream-4-0-250828` (默认)
-  - `doubao-seedream-4-0-preview`
-  - `doubao-seedream-3-0`
+  - `doubao-seedream-4-5-251128`
 - **aspect_ratio**: 图像宽高比
   - 1:1 (2048x2048), 2:3 (1664x2496), 3:2 (2496x1664), 4:3 (2304x1728), 3:4 (1728x2304), 16:9 (2560x1440), 9:16 (1440x2560), 21:9 (3024x1296)
 
