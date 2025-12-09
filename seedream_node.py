@@ -370,21 +370,32 @@ class SeedreamImageGenerate:
                     for chunk in images_response:
                         chunk_count += 1
                         print(f"   📦 收到第 {chunk_count} 个chunk, 类型: {type(chunk)}")
-                        print(f"   📦 Chunk属性: {dir(chunk)}")
                         
                         if hasattr(chunk, 'data'):
                             print(f"   ✓ Chunk有data属性，数据项数: {len(chunk.data)}")
                             for img_data in chunk.data:
-                                all_image_data.append(img_data)
-                                print(f"   ✅ 收到第 {len(all_image_data)} 张图片: {img_data.size if hasattr(img_data, 'size') else 'unknown'}")
+                                # 验证图片数据有效性
+                                has_url = hasattr(img_data, 'url') and img_data.url is not None
+                                has_b64 = hasattr(img_data, 'b64_json') and img_data.b64_json is not None
+                                
+                                if has_url or has_b64:
+                                    all_image_data.append(img_data)
+                                    size_info = img_data.size if hasattr(img_data, 'size') else 'unknown'
+                                    url_preview = img_data.url[:50] + '...' if has_url and len(img_data.url) > 50 else (img_data.url if has_url else 'b64_json')
+                                    print(f"   ✅ 收到第 {len(all_image_data)} 张有效图片: {size_info}, URL: {url_preview}")
+                                else:
+                                    print(f"   ⚠️ 跳过无效图片数据: url={getattr(img_data, 'url', None)}, b64_json={'存在' if has_b64 else '不存在'}")
                         else:
                             print(f"   ⚠️ Chunk没有data属性")
                             # 可能chunk本身就是image data
-                            if hasattr(chunk, 'url') or hasattr(chunk, 'b64_json'):
+                            has_url = hasattr(chunk, 'url') and chunk.url is not None
+                            has_b64 = hasattr(chunk, 'b64_json') and chunk.b64_json is not None
+                            
+                            if has_url or has_b64:
                                 all_image_data.append(chunk)
                                 print(f"   ✅ 直接收集chunk为图片: {len(all_image_data)}")
                     
-                    print(f"📊 流式响应完成，共收到 {chunk_count} 个chunk，收集 {len(all_image_data)} 张图片")
+                    print(f"📊 流式响应完成，共收到 {chunk_count} 个chunk，收集 {len(all_image_data)} 张有效图片")
                 except Exception as e:
                     print(f"❌ 处理流式响应时出错: {type(e).__name__}: {e}")
                     import traceback
@@ -394,11 +405,15 @@ class SeedreamImageGenerate:
                 # 非流式响应，直接使用data
                 print(f"📦 非流式响应模式")
                 print(f"   响应类型: {type(images_response)}")
-                print(f"   响应属性: {dir(images_response)}")
                 
                 if hasattr(images_response, 'data'):
-                    all_image_data = images_response.data
-                    print(f"📊 非流式响应，返回 {len(all_image_data)} 张图片")
+                    # 过滤有效图片数据
+                    for img_data in images_response.data:
+                        has_url = hasattr(img_data, 'url') and img_data.url is not None
+                        has_b64 = hasattr(img_data, 'b64_json') and img_data.b64_json is not None
+                        if has_url or has_b64:
+                            all_image_data.append(img_data)
+                    print(f"📊 非流式响应，返回 {len(all_image_data)} 张有效图片")
                 else:
                     print(f"⚠️ 响应没有data属性")
             
@@ -436,8 +451,13 @@ class SeedreamImageGenerate:
             
             for i, image_data in enumerate(all_image_data):
                 result_info.append(f"📷 图像 {i+1}:")
-                result_info.append(f"   🔗 URL: {image_data.url}")
-                result_info.append(f"   📏 尺寸: {image_data.size}")
+                
+                # 安全获取URL和尺寸
+                url = getattr(image_data, 'url', None)
+                size = getattr(image_data, 'size', None)
+                
+                result_info.append(f"   🔗 URL: {url if url else 'N/A'}")
+                result_info.append(f"   📏 尺寸: {size if size else 'N/A'}")
                 
                 # Add any additional metadata if available
                 if hasattr(image_data, 'revised_prompt') and image_data.revised_prompt:
@@ -448,18 +468,24 @@ class SeedreamImageGenerate:
                 
                 if response_format == "url":
                     # Download image from URL
-                    tensor = self.download_image_from_url(image_data.url)
-                    output_tensors.append(tensor)
+                    if url and url != 'N/A':
+                        tensor = self.download_image_from_url(url)
+                        output_tensors.append(tensor)
+                    else:
+                        print(f"⚠️ 图像 {i+1} 没有有效URL，跳过下载")
                 else:  # b64_json
                     # Handle base64 encoded image
-                    import base64
-                    image_data_b64 = image_data.b64_json
-                    image_bytes = base64.b64decode(image_data_b64)
-                    image = Image.open(io.BytesIO(image_bytes))
-                    if image.mode != 'RGB':
-                        image = image.convert('RGB')
-                    tensor = self.pil_to_tensor(image)
-                    output_tensors.append(tensor)
+                    if hasattr(image_data, 'b64_json') and image_data.b64_json:
+                        import base64
+                        image_data_b64 = image_data.b64_json
+                        image_bytes = base64.b64decode(image_data_b64)
+                        image = Image.open(io.BytesIO(image_bytes))
+                        if image.mode != 'RGB':
+                            image = image.convert('RGB')
+                        tensor = self.pil_to_tensor(image)
+                        output_tensors.append(tensor)
+                    else:
+                        print(f"⚠️ 图像 {i+1} 没有有效的b64_json数据，跳过处理")
                 
                 result_info.append("")
             
