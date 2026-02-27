@@ -27,7 +27,7 @@ class SeedreamImageGenerate:
                 "model": (["doubao-seedream-4-0-250828", "doubao-seedream-4-5-251128", "doubao-seedream-5-0-260128"], {
                     "default": "doubao-seedream-4-0-250828"
                 }),
-                "aspect_ratio": (["1:1", "2:3", "3:2", "4:3", "3:4", "16:9", "9:16", "21:9", "2K", "3K", "3.5K", "4K"], {
+                "aspect_ratio": (["1:1", "2:3", "3:2", "4:3", "3:4", "16:9", "9:16", "10:16", "16:10", "21:9", "2K", "3K", "3.5K", "4K"], {
                     "default": "1:1"
                 }),
                 "sequential_image_generation": (["auto", "enabled", "disabled"], {
@@ -202,6 +202,8 @@ class SeedreamImageGenerate:
             "3:4": "1728x2304",
             "16:9": "2560x1440",
             "9:16": "1440x2560",
+            "10:16": "2000x3200",
+            "16:10": "3200x2000",
             "3:2": "2496x1664",
             "2:3": "1664x2496",
             #"2:3": "1040x1560",
