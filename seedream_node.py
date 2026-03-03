@@ -8,7 +8,7 @@ import time
 import folder_paths
 from volcenginesdkarkruntime import Ark
 from volcenginesdkarkruntime.types.images.images import SequentialImageGenerationOptions
-from volcenginesdkarkruntime.types.images.images import SequentialImageGenerationOptions
+from volcenginesdkarkruntime.types.images.images import ContentGenerationTool
 
 class SeedreamImageGenerate:
     """
@@ -194,6 +194,10 @@ class SeedreamImageGenerate:
         import random
         return random.choice(example_urls)
     
+    def _get_additional_generate_params(self):
+        """Hook for subclasses to inject extra parameters into the API call"""
+        return {}
+    
     def aspect_ratio_to_size(self, aspect_ratio):
         """Convert aspect ratio to size parameter"""
         ratio_map = {
@@ -370,6 +374,11 @@ class SeedreamImageGenerate:
             print(f"   - watermark: {watermark}")
             print(f"   - stream: {stream}")
             print(f"   - 有图片输入: {len(image_urls) > 0 if image_urls else False}")
+            
+            extra_params = self._get_additional_generate_params()
+            if extra_params:
+                generate_params.update(extra_params)
+                print(f"   - 额外参数: {list(extra_params.keys())}")
             
             images_response = self.client.images.generate(**generate_params)
             
@@ -641,11 +650,104 @@ class SeedreamImageGenerate:
             
             return ([self.pil_to_tensor(error_img)], error_text)
 
+class SeedreamImageGenerateWithWebSearch(SeedreamImageGenerate):
+    """
+    A ComfyUI node for generating images using Volcengine Seedream API with optional web search.
+    Model is fixed to doubao-seedream-5-0-260128 which supports web search tool.
+    """
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {
+                    "multiline": True,
+                    "default": "",
+                    "placeholder": "Enter your image generation prompt here..."
+                }),
+                "enable_web_search": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "启用网络搜索 - 开启后联网搜索实时信息辅助图像生成"
+                }),
+                "aspect_ratio": (["1:1", "2:3", "3:2", "4:3", "3:4", "16:9", "9:16", "10:16", "16:10", "21:9", "2K", "3K", "3.5K", "4K"], {
+                    "default": "1:1"
+                }),
+                "sequential_image_generation": (["auto", "enabled", "disabled"], {
+                    "default": "auto",
+                    "tooltip": "顺序生成模式：auto=自动，enabled=启用，disabled=禁用"
+                }),
+                "max_images": ("INT", {
+                    "default": 1,
+                    "min": 1,
+                    "max": 10,
+                    "step": 1,
+                    "tooltip": "sequential_image_generation_options.max_images - 最大生成图片数量（用于顺序生成）"
+                }),
+                "response_format": (["url", "b64_json"], {
+                    "default": "url"
+                }),
+                "watermark": ("BOOLEAN", {
+                    "default": False
+                }),
+                "stream": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "流式传输模式 - 启用后与max_images配合可生成多张图片"
+                }),
+                "base_url": ("STRING", {
+                    "default": "https://ark.cn-beijing.volces.com/api/v3"
+                }),
+                "use_local_images": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "使用本地图像（Base64格式，官方支持）"
+                }),
+                "seed": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 18446744073709551615,
+                    "step": 1
+                }),
+                "enable_auto_retry": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "启用自动重试机制，处理云端工作流的异步执行问题"
+                }),
+            },
+            "optional": {
+                "image1": ("IMAGE",),
+                "image2": ("IMAGE",),
+                "image3": ("IMAGE",),
+                "image4": ("IMAGE",),
+                "image5": ("IMAGE",)
+            }
+        }
+    
+    FUNCTION = "generate_images_with_web_search"
+    
+    def generate_images_with_web_search(self, prompt, enable_web_search, aspect_ratio,
+                                        sequential_image_generation, max_images, response_format,
+                                        watermark, stream, base_url, use_local_images, seed,
+                                        enable_auto_retry,
+                                        image1=None, image2=None, image3=None, image4=None, image5=None):
+        self._enable_web_search = enable_web_search
+        return super().generate_images(
+            prompt, "doubao-seedream-5-0-260128", aspect_ratio,
+            sequential_image_generation, max_images, response_format,
+            watermark, stream, base_url, use_local_images, seed, enable_auto_retry,
+            image1, image2, image3, image4, image5
+        )
+    
+    def _get_additional_generate_params(self):
+        if getattr(self, '_enable_web_search', False):
+            return {"tools": [ContentGenerationTool(type="web_search")]}
+        return {}
+
+
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
-    "SeedreamImageGenerate": SeedreamImageGenerate
+    "SeedreamImageGenerate": SeedreamImageGenerate,
+    "SeedreamImageGenerateWithWebSearch": SeedreamImageGenerateWithWebSearch
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "SeedreamImageGenerate": "Seedream Image Generate"
+    "SeedreamImageGenerate": "Seedream Image Generate",
+    "SeedreamImageGenerateWithWebSearch": "Seedream Image Generate With Web Search"
 }
