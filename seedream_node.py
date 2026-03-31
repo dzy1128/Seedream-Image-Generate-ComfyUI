@@ -648,7 +648,8 @@ class SeedreamImageGenerate:
             if 'image1' in locals() and image1 is not None:
                 print(f"  image1 形状: {getattr(image1, 'shape', 'N/A')}")
             
-            return ([self.pil_to_tensor(error_img)], error_text)
+            # 抛出异常让ComfyUI显示报错弹窗，不输出红图
+            raise RuntimeError(error_text)
 
 class SeedreamImageGenerateWithWebSearch(SeedreamImageGenerate):
     """
