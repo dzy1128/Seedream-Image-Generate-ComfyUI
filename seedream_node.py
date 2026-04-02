@@ -790,7 +790,17 @@ class SeedanceVideoGenerate:
                 }),
             },
             "optional": {
-                "image": ("IMAGE",),
+                "image": ("IMAGE", {"tooltip": "可选图片输入，用于图生视频"}),
+                "video": ("STRING", {
+                    "default": "",
+                    "placeholder": "视频文件路径或URL...",
+                    "tooltip": "可选视频输入（本地文件路径或URL），用于视频生视频"
+                }),
+                "audio": ("STRING", {
+                    "default": "",
+                    "placeholder": "音频文件路径或URL...",
+                    "tooltip": "可选音频输入（本地文件路径或URL），用于为视频添加音频驱动"
+                }),
             }
         }
     
@@ -822,6 +832,52 @@ class SeedanceVideoGenerate:
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         return f"data:image/png;base64,{img_base64}"
     
+    def file_to_base64_url(self, file_path, media_type):
+        """Convert a local file to a base64 data URL. media_type example: 'video/mp4', 'audio/wav'"""
+        import base64
+        with open(file_path, 'rb') as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode('utf-8')
+        return f"data:{media_type};base64,{b64}"
+    
+    def _detect_mime_type(self, file_path, category):
+        """Detect MIME type from file extension"""
+        ext = os.path.splitext(file_path)[1].lower()
+        mime_maps = {
+            "video": {
+                '.mp4': 'video/mp4', '.webm': 'video/webm', '.avi': 'video/x-msvideo',
+                '.mov': 'video/quicktime', '.mkv': 'video/x-matroska', '.flv': 'video/x-flv',
+            },
+            "audio": {
+                '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+                '.flac': 'audio/flac', '.aac': 'audio/aac', '.m4a': 'audio/mp4',
+            },
+        }
+        return mime_maps.get(category, {}).get(ext, f'{category}/mp4' if category == 'video' else f'{category}/mpeg')
+    
+    def _resolve_media_url(self, input_str, category):
+        """
+        Resolve a media input string to a URL suitable for the API.
+        Supports: http(s) URL (pass through), local file path (convert to base64).
+        """
+        if not input_str or not input_str.strip():
+            return None
+        
+        input_str = input_str.strip()
+        
+        if input_str.startswith(('http://', 'https://')):
+            return input_str
+        
+        if input_str.startswith('data:'):
+            return input_str
+        
+        if os.path.isfile(input_str):
+            mime_type = self._detect_mime_type(input_str, category)
+            print(f"   📂 读取本地{category}文件: {input_str} ({mime_type})")
+            return self.file_to_base64_url(input_str, mime_type)
+        
+        raise ValueError(f"{category}输入无效: '{input_str}' 既不是有效URL也不是存在的本地文件路径")
+    
     def _extract_video_url(self, result):
         """Try multiple patterns to extract video URL from task result"""
         # Pattern 1: content array with video_url type
@@ -849,7 +905,7 @@ class SeedanceVideoGenerate:
         return ""
     
     def generate_video(self, prompt, model, duration, watermark, base_url,
-                       poll_interval, max_wait_time, image=None):
+                       poll_interval, max_wait_time, image=None, video="", audio=""):
         try:
             self.initialize_client(base_url)
             
@@ -857,7 +913,9 @@ class SeedanceVideoGenerate:
             full_prompt = f"{prompt} --wm {wm_str} --dur {duration}"
             
             content = []
+            input_modes = []
             
+            # Image input (IMAGE tensor from ComfyUI)
             if image is not None:
                 pil_img = self.tensor_to_pil(image.squeeze(0))
                 img_url = self.image_to_base64_url(pil_img)
@@ -865,14 +923,40 @@ class SeedanceVideoGenerate:
                     "type": "image_url",
                     "image_url": {"url": img_url}
                 })
-                print(f"📸 使用输入图片进行图生视频")
+                input_modes.append("图片")
+                print(f"📸 使用输入图片")
             
+            # Video input (file path or URL string)
+            video_media_url = self._resolve_media_url(video, "video")
+            if video_media_url:
+                content.append({
+                    "type": "video_url",
+                    "video_url": {"url": video_media_url}
+                })
+                input_modes.append("视频")
+                print(f"🎥 使用输入视频")
+            
+            # Audio input (file path or URL string)
+            audio_media_url = self._resolve_media_url(audio, "audio")
+            if audio_media_url:
+                content.append({
+                    "type": "input_audio",
+                    "input_audio": {"url": audio_media_url}
+                })
+                input_modes.append("音频")
+                print(f"🔊 使用输入音频")
+            
+            # Text prompt (always present)
             content.append({
                 "type": "text",
                 "text": full_prompt
             })
+            input_modes.append("文字")
+            
+            mode_desc = "纯文生视频" if len(input_modes) == 1 else f"多模态生成({'+'.join(input_modes)})"
             
             print(f"🎬 创建视频生成任务")
+            print(f"   模式: {mode_desc}")
             print(f"   模型: {model}")
             print(f"   提示词: {prompt}")
             print(f"   完整提示: {full_prompt}")
@@ -903,9 +987,9 @@ class SeedanceVideoGenerate:
                         f"🎬 视频生成信息:",
                         f"📝 提示词: {prompt}",
                         f"🔧 模型: {model}",
+                        f"🎯 模式: {mode_desc}",
                         f"⏱️ 时长: {duration}秒",
                         f"💧 水印: {'是' if watermark else '否'}",
-                        f"📸 图生视频: {'是' if image is not None else '否'}",
                         f"🆔 任务ID: {task_id}",
                         f"⏳ 耗时: 约{elapsed}秒",
                         f"🔗 视频URL: {video_url if video_url else '未能提取，请查看控制台完整响应'}",
