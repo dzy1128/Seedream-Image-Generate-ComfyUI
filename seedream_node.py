@@ -804,8 +804,8 @@ class SeedanceVideoGenerate:
             }
         }
     
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("video_url", "video_file_path", "text")
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("video_url", "text")
     FUNCTION = "generate_video"
     CATEGORY = "video/generation"
     
@@ -998,7 +998,7 @@ class SeedanceVideoGenerate:
                     raise RuntimeError(f"视频生成成功但未能提取视频URL，任务ID: {task_id}，请查看控制台完整响应")
                 
                 meta = self._extract_result_metadata(get_result)
-                video_file_path = self._download_video(video_url, task_id)
+                # video_file_path = self._download_video(video_url, task_id)
                 
                 result_info = [
                     f"🎬 视频生成信息:",
@@ -1021,10 +1021,9 @@ class SeedanceVideoGenerate:
                 if meta.get('total_tokens') is not None:
                     result_info.append(f"📊 Token消耗: {meta['total_tokens']}")
                 result_info.append(f"🔗 视频URL: {video_url}")
-                result_info.append(f"📁 临时文件: {video_file_path}")
                 result_info.append(f"⚡ 状态: 成功")
                 
-                return (video_url, video_file_path, "\n".join(result_info))
+                return (video_url, "\n".join(result_info))
             
             elif status == "failed":
                 error_msg = getattr(get_result, 'error', 'Unknown error')
