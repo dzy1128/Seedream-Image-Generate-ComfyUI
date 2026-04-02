@@ -742,13 +742,239 @@ class SeedreamImageGenerateWithWebSearch(SeedreamImageGenerate):
         return {}
 
 
+class SeedanceVideoGenerate:
+    """
+    A ComfyUI node for generating videos using Volcengine Seedance API.
+    Uses async task creation + polling workflow.
+    """
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {
+                    "multiline": True,
+                    "default": "",
+                    "placeholder": "描述要生成的视频内容..."
+                }),
+                "model": (["doubao-seedance-2-0-260128"], {
+                    "default": "doubao-seedance-2-0-260128"
+                }),
+                "duration": ("INT", {
+                    "default": 5,
+                    "min": 1,
+                    "max": 10,
+                    "step": 1,
+                    "tooltip": "视频时长（秒），对应 --dur 参数"
+                }),
+                "watermark": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "是否添加水印，对应 --wm 参数"
+                }),
+                "base_url": ("STRING", {
+                    "default": "https://ark.cn-beijing.volces.com/api/v3"
+                }),
+                "poll_interval": ("INT", {
+                    "default": 3,
+                    "min": 1,
+                    "max": 30,
+                    "step": 1,
+                    "tooltip": "任务状态轮询间隔（秒）"
+                }),
+                "max_wait_time": ("INT", {
+                    "default": 600,
+                    "min": 60,
+                    "max": 3600,
+                    "step": 30,
+                    "tooltip": "最大等待时间（秒），超时后任务将被放弃"
+                }),
+            },
+            "optional": {
+                "image": ("IMAGE",),
+            }
+        }
+    
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("video_url", "text")
+    FUNCTION = "generate_video"
+    CATEGORY = "video/generation"
+    
+    def __init__(self):
+        self.client = None
+    
+    def initialize_client(self, base_url):
+        api_key = os.environ.get("ARK_API_KEY")
+        if not api_key:
+            raise ValueError("API Key is required. Please set ARK_API_KEY environment variable.")
+        self.client = Ark(base_url=base_url, api_key=api_key.strip())
+    
+    def tensor_to_pil(self, tensor):
+        i = 255. * tensor.cpu().numpy()
+        img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+        return img
+    
+    def image_to_base64_url(self, pil_image):
+        import base64
+        if pil_image.mode != 'RGB':
+            pil_image = pil_image.convert('RGB')
+        buffered = io.BytesIO()
+        pil_image.save(buffered, format="PNG")
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        return f"data:image/png;base64,{img_base64}"
+    
+    def _extract_video_url(self, result):
+        """Try multiple patterns to extract video URL from task result"""
+        # Pattern 1: content array with video_url type
+        if hasattr(result, 'content') and result.content:
+            for item in result.content:
+                if isinstance(item, dict):
+                    if item.get('type') == 'video_url':
+                        url = item.get('video_url', {})
+                        return url.get('url', '') if isinstance(url, dict) else str(url)
+                elif hasattr(item, 'type') and item.type == 'video_url':
+                    if hasattr(item, 'video_url'):
+                        return item.video_url.url if hasattr(item.video_url, 'url') else str(item.video_url)
+        
+        # Pattern 2: direct video_url attribute
+        if hasattr(result, 'video_url'):
+            return result.video_url
+        
+        # Pattern 3: output attribute
+        if hasattr(result, 'output'):
+            if hasattr(result.output, 'video_url'):
+                return result.output.video_url
+            if isinstance(result.output, str):
+                return result.output
+        
+        return ""
+    
+    def generate_video(self, prompt, model, duration, watermark, base_url,
+                       poll_interval, max_wait_time, image=None):
+        try:
+            self.initialize_client(base_url)
+            
+            wm_str = "true" if watermark else "false"
+            full_prompt = f"{prompt} --wm {wm_str} --dur {duration}"
+            
+            content = []
+            
+            if image is not None:
+                pil_img = self.tensor_to_pil(image.squeeze(0))
+                img_url = self.image_to_base64_url(pil_img)
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": img_url}
+                })
+                print(f"📸 使用输入图片进行图生视频")
+            
+            content.append({
+                "type": "text",
+                "text": full_prompt
+            })
+            
+            print(f"🎬 创建视频生成任务")
+            print(f"   模型: {model}")
+            print(f"   提示词: {prompt}")
+            print(f"   完整提示: {full_prompt}")
+            print(f"   时长: {duration}秒")
+            print(f"   水印: {'是' if watermark else '否'}")
+            
+            create_result = self.client.content_generation.tasks.create(
+                model=model,
+                content=content
+            )
+            
+            task_id = create_result.id
+            print(f"   任务ID: {task_id}")
+            print(f"🔄 开始轮询任务状态 (间隔 {poll_interval}秒, 最大等待 {max_wait_time}秒)")
+            
+            elapsed = 0
+            while elapsed < max_wait_time:
+                get_result = self.client.content_generation.tasks.get(task_id=task_id)
+                status = get_result.status
+                
+                if status == "succeeded":
+                    print(f"✅ 视频生成成功! (耗时约 {elapsed}秒)")
+                    print(f"   完整响应: {get_result}")
+                    
+                    video_url = self._extract_video_url(get_result)
+                    
+                    result_info = [
+                        f"🎬 视频生成信息:",
+                        f"📝 提示词: {prompt}",
+                        f"🔧 模型: {model}",
+                        f"⏱️ 时长: {duration}秒",
+                        f"💧 水印: {'是' if watermark else '否'}",
+                        f"📸 图生视频: {'是' if image is not None else '否'}",
+                        f"🆔 任务ID: {task_id}",
+                        f"⏳ 耗时: 约{elapsed}秒",
+                        f"🔗 视频URL: {video_url if video_url else '未能提取，请查看控制台完整响应'}",
+                        f"⚡ 状态: 成功",
+                    ]
+                    return (video_url, "\n".join(result_info))
+                
+                elif status == "failed":
+                    error_msg = getattr(get_result, 'error', 'Unknown error')
+                    print(f"❌ 视频生成失败: {error_msg}")
+                    
+                    result_info = [
+                        f"❌ 视频生成失败",
+                        f"🔍 错误信息: {error_msg}",
+                        f"📝 提示词: {prompt}",
+                        f"🔧 模型: {model}",
+                        f"🆔 任务ID: {task_id}",
+                    ]
+                    return ("", "\n".join(result_info))
+                
+                else:
+                    print(f"   当前状态: {status}，{poll_interval}秒后重试... (已等待 {elapsed}秒)")
+                    time.sleep(poll_interval)
+                    elapsed += poll_interval
+            
+            # Timeout
+            print(f"⏰ 任务超时 (已等待 {max_wait_time}秒)")
+            result_info = [
+                f"⏰ 视频生成超时",
+                f"🆔 任务ID: {task_id}",
+                f"⏳ 已等待: {max_wait_time}秒",
+                f"💡 可以增大 max_wait_time 参数后重试",
+                f"📝 提示词: {prompt}",
+                f"🔧 模型: {model}",
+            ]
+            return ("", "\n".join(result_info))
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"SeedanceVideoGenerate 错误: {type(e).__name__}: {error_msg}")
+            
+            error_text_parts = [
+                "❌ 视频生成失败",
+                "",
+                f"🔍 错误信息: {error_msg}",
+                "",
+                f"📝 提示词: {prompt}",
+                f"🔧 模型: {model}",
+                f"⏱️ 时长: {duration}秒",
+                f"🌐 API地址: {base_url}",
+                "",
+                "💡 故障排除:",
+                "   1. 检查 ARK_API_KEY 是否正确设置",
+                "   2. 确认模型是否可用",
+                "   3. 检查网络连接",
+                "   4. 查看ComfyUI控制台获取详细日志",
+            ]
+            return ("", "\n".join(error_text_parts))
+
+
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
     "SeedreamImageGenerate": SeedreamImageGenerate,
-    "SeedreamImageGenerateWithWebSearch": SeedreamImageGenerateWithWebSearch
+    "SeedreamImageGenerateWithWebSearch": SeedreamImageGenerateWithWebSearch,
+    "SeedanceVideoGenerate": SeedanceVideoGenerate
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SeedreamImageGenerate": "Seedream Image Generate",
-    "SeedreamImageGenerateWithWebSearch": "Seedream Image Generate With Web Search"
+    "SeedreamImageGenerateWithWebSearch": "Seedream Image Generate With Web Search",
+    "SeedanceVideoGenerate": "Seedance Video Generate"
 }
