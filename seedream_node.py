@@ -804,8 +804,8 @@ class SeedanceVideoGenerate:
             }
         }
     
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("video_url", "text")
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("video_url", "video_file_path", "text")
     FUNCTION = "generate_video"
     CATEGORY = "video/generation"
     
@@ -879,175 +879,163 @@ class SeedanceVideoGenerate:
         raise ValueError(f"{category}输入无效: '{input_str}' 既不是有效URL也不是存在的本地文件路径")
     
     def _extract_video_url(self, result):
-        """Try multiple patterns to extract video URL from task result"""
-        # Pattern 1: content array with video_url type
+        """Extract video URL from task result based on actual API response format:
+        {"content": {"video_url": "https://..."}, ...}
+        """
         if hasattr(result, 'content') and result.content:
-            for item in result.content:
-                if isinstance(item, dict):
-                    if item.get('type') == 'video_url':
-                        url = item.get('video_url', {})
-                        return url.get('url', '') if isinstance(url, dict) else str(url)
-                elif hasattr(item, 'type') and item.type == 'video_url':
-                    if hasattr(item, 'video_url'):
-                        return item.video_url.url if hasattr(item.video_url, 'url') else str(item.video_url)
+            content = result.content
+            # content is an object with video_url attribute
+            if hasattr(content, 'video_url') and content.video_url:
+                return content.video_url
+            # content is a dict with video_url key
+            if isinstance(content, dict) and content.get('video_url'):
+                return content['video_url']
         
-        # Pattern 2: direct video_url attribute
-        if hasattr(result, 'video_url'):
+        # Fallback: direct video_url on result
+        if hasattr(result, 'video_url') and result.video_url:
             return result.video_url
-        
-        # Pattern 3: output attribute
-        if hasattr(result, 'output'):
-            if hasattr(result.output, 'video_url'):
-                return result.output.video_url
-            if isinstance(result.output, str):
-                return result.output
         
         return ""
     
+    def _extract_result_metadata(self, result):
+        """Extract additional metadata from task result"""
+        meta = {}
+        for field in ('seed', 'resolution', 'ratio', 'duration', 'framespersecond'):
+            val = getattr(result, field, None)
+            if val is not None:
+                meta[field] = val
+        if hasattr(result, 'usage') and result.usage:
+            usage = result.usage
+            meta['total_tokens'] = getattr(usage, 'total_tokens', None)
+        return meta
+    
+    def _download_video(self, video_url, task_id):
+        """Download video from URL to ComfyUI temp directory for pipeline passthrough"""
+        temp_dir = folder_paths.get_temp_directory()
+        filename = f"seedance_{task_id}_{int(time.time())}.mp4"
+        file_path = os.path.join(temp_dir, filename)
+        
+        print(f"📥 正在下载视频: {video_url[:80]}...")
+        response = requests.get(video_url, stream=True)
+        response.raise_for_status()
+        
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded = 0
+        
+        with open(file_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total_size > 0 and (downloaded * 100 // total_size) % 20 == 0:
+                    print(f"   下载进度: {downloaded * 100 // total_size}%")
+        
+        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        print(f"✅ 视频已下载到临时目录: {file_path} ({file_size_mb:.1f} MB)")
+        return file_path
+    
     def generate_video(self, prompt, model, duration, watermark, base_url,
                        poll_interval, max_wait_time, image=None, video="", audio=""):
-        try:
-            self.initialize_client(base_url)
+        self.initialize_client(base_url)
+        
+        wm_str = "true" if watermark else "false"
+        full_prompt = f"{prompt} --wm {wm_str} --dur {duration}"
+        
+        content = []
+        input_modes = []
+        
+        if image is not None:
+            pil_img = self.tensor_to_pil(image.squeeze(0))
+            img_url = self.image_to_base64_url(pil_img)
+            content.append({"type": "image_url", "image_url": {"url": img_url}})
+            input_modes.append("图片")
+            print(f"📸 使用输入图片")
+        
+        video_media_url = self._resolve_media_url(video, "video")
+        if video_media_url:
+            content.append({"type": "video_url", "video_url": {"url": video_media_url}})
+            input_modes.append("视频")
+            print(f"🎥 使用输入视频")
+        
+        audio_media_url = self._resolve_media_url(audio, "audio")
+        if audio_media_url:
+            content.append({"type": "input_audio", "input_audio": {"url": audio_media_url}})
+            input_modes.append("音频")
+            print(f"🔊 使用输入音频")
+        
+        content.append({"type": "text", "text": full_prompt})
+        input_modes.append("文字")
+        
+        mode_desc = "纯文生视频" if len(input_modes) == 1 else f"多模态生成({'+'.join(input_modes)})"
+        
+        print(f"🎬 创建视频生成任务")
+        print(f"   模式: {mode_desc}")
+        print(f"   模型: {model}")
+        print(f"   提示词: {prompt}")
+        print(f"   完整提示: {full_prompt}")
+        print(f"   时长: {duration}秒")
+        print(f"   水印: {'是' if watermark else '否'}")
+        
+        create_result = self.client.content_generation.tasks.create(
+            model=model,
+            content=content
+        )
+        
+        task_id = create_result.id
+        print(f"   任务ID: {task_id}")
+        print(f"🔄 开始轮询任务状态 (间隔 {poll_interval}秒, 最大等待 {max_wait_time}秒)")
+        
+        elapsed = 0
+        while elapsed < max_wait_time:
+            get_result = self.client.content_generation.tasks.get(task_id=task_id)
+            status = get_result.status
             
-            wm_str = "true" if watermark else "false"
-            full_prompt = f"{prompt} --wm {wm_str} --dur {duration}"
-            
-            content = []
-            input_modes = []
-            
-            # Image input (IMAGE tensor from ComfyUI)
-            if image is not None:
-                pil_img = self.tensor_to_pil(image.squeeze(0))
-                img_url = self.image_to_base64_url(pil_img)
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": img_url}
-                })
-                input_modes.append("图片")
-                print(f"📸 使用输入图片")
-            
-            # Video input (file path or URL string)
-            video_media_url = self._resolve_media_url(video, "video")
-            if video_media_url:
-                content.append({
-                    "type": "video_url",
-                    "video_url": {"url": video_media_url}
-                })
-                input_modes.append("视频")
-                print(f"🎥 使用输入视频")
-            
-            # Audio input (file path or URL string)
-            audio_media_url = self._resolve_media_url(audio, "audio")
-            if audio_media_url:
-                content.append({
-                    "type": "input_audio",
-                    "input_audio": {"url": audio_media_url}
-                })
-                input_modes.append("音频")
-                print(f"🔊 使用输入音频")
-            
-            # Text prompt (always present)
-            content.append({
-                "type": "text",
-                "text": full_prompt
-            })
-            input_modes.append("文字")
-            
-            mode_desc = "纯文生视频" if len(input_modes) == 1 else f"多模态生成({'+'.join(input_modes)})"
-            
-            print(f"🎬 创建视频生成任务")
-            print(f"   模式: {mode_desc}")
-            print(f"   模型: {model}")
-            print(f"   提示词: {prompt}")
-            print(f"   完整提示: {full_prompt}")
-            print(f"   时长: {duration}秒")
-            print(f"   水印: {'是' if watermark else '否'}")
-            
-            create_result = self.client.content_generation.tasks.create(
-                model=model,
-                content=content
-            )
-            
-            task_id = create_result.id
-            print(f"   任务ID: {task_id}")
-            print(f"🔄 开始轮询任务状态 (间隔 {poll_interval}秒, 最大等待 {max_wait_time}秒)")
-            
-            elapsed = 0
-            while elapsed < max_wait_time:
-                get_result = self.client.content_generation.tasks.get(task_id=task_id)
-                status = get_result.status
+            if status == "succeeded":
+                print(f"✅ 视频生成成功! (耗时约 {elapsed}秒)")
+                print(f"   完整响应: {get_result}")
                 
-                if status == "succeeded":
-                    print(f"✅ 视频生成成功! (耗时约 {elapsed}秒)")
-                    print(f"   完整响应: {get_result}")
-                    
-                    video_url = self._extract_video_url(get_result)
-                    
-                    result_info = [
-                        f"🎬 视频生成信息:",
-                        f"📝 提示词: {prompt}",
-                        f"🔧 模型: {model}",
-                        f"🎯 模式: {mode_desc}",
-                        f"⏱️ 时长: {duration}秒",
-                        f"💧 水印: {'是' if watermark else '否'}",
-                        f"🆔 任务ID: {task_id}",
-                        f"⏳ 耗时: 约{elapsed}秒",
-                        f"🔗 视频URL: {video_url if video_url else '未能提取，请查看控制台完整响应'}",
-                        f"⚡ 状态: 成功",
-                    ]
-                    return (video_url, "\n".join(result_info))
+                video_url = self._extract_video_url(get_result)
+                if not video_url:
+                    raise RuntimeError(f"视频生成成功但未能提取视频URL，任务ID: {task_id}，请查看控制台完整响应")
                 
-                elif status == "failed":
-                    error_msg = getattr(get_result, 'error', 'Unknown error')
-                    print(f"❌ 视频生成失败: {error_msg}")
-                    
-                    result_info = [
-                        f"❌ 视频生成失败",
-                        f"🔍 错误信息: {error_msg}",
-                        f"📝 提示词: {prompt}",
-                        f"🔧 模型: {model}",
-                        f"🆔 任务ID: {task_id}",
-                    ]
-                    return ("", "\n".join(result_info))
+                meta = self._extract_result_metadata(get_result)
+                video_file_path = self._download_video(video_url, task_id)
                 
-                else:
-                    print(f"   当前状态: {status}，{poll_interval}秒后重试... (已等待 {elapsed}秒)")
-                    time.sleep(poll_interval)
-                    elapsed += poll_interval
+                result_info = [
+                    f"🎬 视频生成信息:",
+                    f"📝 提示词: {prompt}",
+                    f"🔧 模型: {model}",
+                    f"🎯 模式: {mode_desc}",
+                    f"⏱️ 时长: {meta.get('duration', duration)}秒",
+                    f"💧 水印: {'是' if watermark else '否'}",
+                    f"🆔 任务ID: {task_id}",
+                    f"⏳ 耗时: 约{elapsed}秒",
+                ]
+                if meta.get('resolution'):
+                    result_info.append(f"📺 分辨率: {meta['resolution']}")
+                if meta.get('ratio'):
+                    result_info.append(f"📐 宽高比: {meta['ratio']}")
+                if meta.get('framespersecond'):
+                    result_info.append(f"🎞️ 帧率: {meta['framespersecond']}fps")
+                if meta.get('seed') is not None:
+                    result_info.append(f"🎲 种子值: {meta['seed']}")
+                if meta.get('total_tokens') is not None:
+                    result_info.append(f"📊 Token消耗: {meta['total_tokens']}")
+                result_info.append(f"🔗 视频URL: {video_url}")
+                result_info.append(f"📁 临时文件: {video_file_path}")
+                result_info.append(f"⚡ 状态: 成功")
+                
+                return (video_url, video_file_path, "\n".join(result_info))
             
-            # Timeout
-            print(f"⏰ 任务超时 (已等待 {max_wait_time}秒)")
-            result_info = [
-                f"⏰ 视频生成超时",
-                f"🆔 任务ID: {task_id}",
-                f"⏳ 已等待: {max_wait_time}秒",
-                f"💡 可以增大 max_wait_time 参数后重试",
-                f"📝 提示词: {prompt}",
-                f"🔧 模型: {model}",
-            ]
-            return ("", "\n".join(result_info))
+            elif status == "failed":
+                error_msg = getattr(get_result, 'error', 'Unknown error')
+                raise RuntimeError(f"视频生成失败 (任务ID: {task_id}): {error_msg}")
             
-        except Exception as e:
-            error_msg = str(e)
-            print(f"SeedanceVideoGenerate 错误: {type(e).__name__}: {error_msg}")
-            
-            error_text_parts = [
-                "❌ 视频生成失败",
-                "",
-                f"🔍 错误信息: {error_msg}",
-                "",
-                f"📝 提示词: {prompt}",
-                f"🔧 模型: {model}",
-                f"⏱️ 时长: {duration}秒",
-                f"🌐 API地址: {base_url}",
-                "",
-                "💡 故障排除:",
-                "   1. 检查 ARK_API_KEY 是否正确设置",
-                "   2. 确认模型是否可用",
-                "   3. 检查网络连接",
-                "   4. 查看ComfyUI控制台获取详细日志",
-            ]
-            return ("", "\n".join(error_text_parts))
+            else:
+                print(f"   当前状态: {status}，{poll_interval}秒后重试... (已等待 {elapsed}秒)")
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+        
+        raise TimeoutError(f"视频生成超时 (任务ID: {task_id})，已等待 {max_wait_time}秒，可增大 max_wait_time 参数后重试")
 
 
 # Node mappings for ComfyUI
