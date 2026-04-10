@@ -1008,7 +1008,7 @@ class SeedanceVideoGenerate:
         
         audio_media_url = self._audio_input_to_media_url(audio)
         if audio_media_url:
-            content.append({"type": "input_audio", "input_audio": {"url": audio_media_url}})
+            content.append({"type": "audio_url", "audio_url": {"url": audio_media_url}})
             input_modes.append("音频")
             print(f"🔊 使用输入音频")
         
