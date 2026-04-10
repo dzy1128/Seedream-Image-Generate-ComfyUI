@@ -1,6 +1,7 @@
 import os
 import mimetypes
 import wave
+import uuid
 from urllib.parse import urlparse
 import requests
 import torch
@@ -1121,15 +1122,221 @@ class SeedanceVideoGenerate:
         raise TimeoutError(f"视频生成超时 (任务ID: {task_id})，已等待 {max_wait_time}秒，可增大 max_wait_time 参数后重试")
 
 
+class TOSUploadVideoURL:
+    """
+    Upload a local ComfyUI VIDEO or file path to Volcengine TOS and output a pre-signed URL.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "bucket": ("STRING", {
+                    "default": "",
+                    "placeholder": "your-bucket-name",
+                    "tooltip": "TOS 桶名称"
+                }),
+                "endpoint": ("STRING", {
+                    "default": "tos-cn-beijing.volces.com",
+                    "tooltip": "TOS Endpoint，例如 tos-cn-beijing.volces.com"
+                }),
+                "region": ("STRING", {
+                    "default": "cn-beijing",
+                    "tooltip": "桶所在地域，例如 cn-beijing"
+                }),
+                "expires_seconds": ("INT", {
+                    "default": 3600,
+                    "min": 60,
+                    "max": 2592000,
+                    "step": 60,
+                    "tooltip": "预签名 URL 时效，单位秒，范围 60-2592000（30天）"
+                }),
+                "object_prefix": ("STRING", {
+                    "default": "seedance/",
+                    "tooltip": "上传到桶内的对象前缀"
+                }),
+            },
+            "optional": {
+                "video": ("VIDEO", {
+                    "tooltip": "可连接 LoadVideo / CreateVideo 等节点输出"
+                }),
+                "file_path": ("STRING", {
+                    "default": "",
+                    "placeholder": "/path/to/local/video.mp4",
+                    "tooltip": "本地视频路径。若同时提供 video 与 file_path，则优先使用 file_path"
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("url", "object_key", "text")
+    FUNCTION = "upload_video"
+    CATEGORY = "video/upload"
+
+    def _import_tos(self):
+        try:
+            import tos
+            return tos
+        except ImportError as e:
+            raise ImportError(
+                "未安装 TOS Python SDK。请先执行 `pip install tos`，或安装更新后的 requirements.txt 依赖。"
+            ) from e
+
+    def _initialize_tos_client(self, endpoint, region):
+        tos = self._import_tos()
+        access_key = os.environ.get("TOS_ACCESS_KEY")
+        secret_key = os.environ.get("TOS_SECRET_KEY")
+
+        if not access_key or not secret_key:
+            raise ValueError("请先设置环境变量 TOS_ACCESS_KEY 和 TOS_SECRET_KEY")
+
+        return tos.TosClientV2(access_key.strip(), secret_key.strip(), endpoint.strip(), region.strip())
+
+    def _normalize_file_path(self, file_path):
+        if file_path is None:
+            return ""
+        return os.path.expanduser(str(file_path).strip().strip('"').strip("'"))
+
+    def _resolve_video_source(self, video=None, file_path=""):
+        normalized_path = self._normalize_file_path(file_path)
+        if normalized_path:
+            if not os.path.isfile(normalized_path):
+                raise ValueError(f"file_path 不存在: {normalized_path}")
+            return {
+                "kind": "path",
+                "path": normalized_path,
+                "filename": os.path.basename(normalized_path),
+            }
+
+        if video is None:
+            raise ValueError("请至少提供一个输入来源：video 或 file_path")
+
+        if hasattr(video, "get_stream_source"):
+            stream_source = video.get_stream_source()
+            if isinstance(stream_source, str) and os.path.isfile(stream_source):
+                return {
+                    "kind": "path",
+                    "path": stream_source,
+                    "filename": os.path.basename(stream_source),
+                }
+            if hasattr(stream_source, "seek"):
+                stream_source.seek(0)
+            if hasattr(stream_source, "read"):
+                return {
+                    "kind": "stream",
+                    "stream": stream_source,
+                    "filename": "video.mp4",
+                }
+
+        raise ValueError("无法从 VIDEO 输入中读取本地文件或字节流，请改用 LoadVideo 或直接填写 file_path")
+
+    def _validate_video_filename(self, filename):
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in (".mp4", ".mov"):
+            raise ValueError(f"当前仅支持上传 .mp4 或 .mov，检测到: {ext or '无扩展名'}")
+        return ext
+
+    def _build_object_key(self, object_prefix, filename):
+        prefix = (object_prefix or "").strip().strip("/")
+        name, ext = os.path.splitext(os.path.basename(filename))
+        safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name).strip("_") or "video"
+        object_name = f"{safe_name}_{uuid.uuid4().hex[:12]}{ext.lower()}"
+        return f"{prefix}/{object_name}" if prefix else object_name
+
+    def _put_object_with_fallbacks(self, client, bucket, object_key, data, content_type):
+        attempts = [
+            lambda: client.put_object(bucket=bucket, key=object_key, content=data, content_type=content_type),
+            lambda: client.put_object(bucket, object_key, content=data, content_type=content_type),
+            lambda: client.put_object(bucket, object_key, data),
+        ]
+
+        last_error = None
+        for attempt in attempts:
+            try:
+                return attempt()
+            except TypeError as e:
+                last_error = e
+
+        if last_error is not None:
+            raise last_error
+
+    def _generate_presigned_url(self, client, bucket, object_key, expires_seconds):
+        attempts = [
+            lambda: client.pre_signed_url(http_method="GET", bucket=bucket, key=object_key, expires=expires_seconds),
+            lambda: client.pre_signed_url("GET", bucket, object_key, expires_seconds),
+        ]
+
+        result = None
+        last_error = None
+        for attempt in attempts:
+            try:
+                result = attempt()
+                break
+            except TypeError as e:
+                last_error = e
+
+        if result is None and last_error is not None:
+            raise last_error
+
+        for attr in ("signed_url", "sign_url", "url"):
+            value = getattr(result, attr, None)
+            if value:
+                return value
+
+        if isinstance(result, str):
+            return result
+
+        return str(result)
+
+    def upload_video(self, bucket, endpoint, region, expires_seconds, object_prefix, video=None, file_path=""):
+        client = self._initialize_tos_client(endpoint, region)
+        source = self._resolve_video_source(video=video, file_path=file_path)
+        ext = self._validate_video_filename(source["filename"])
+        content_type = mimetypes.guess_type(source["filename"])[0] or ("video/mp4" if ext == ".mp4" else "video/quicktime")
+        object_key = self._build_object_key(object_prefix, source["filename"])
+
+        if source["kind"] == "path":
+            file_size_bytes = os.path.getsize(source["path"])
+            with open(source["path"], "rb") as f:
+                data = f.read()
+        else:
+            stream = source["stream"]
+            data = stream.read()
+            file_size_bytes = len(data)
+
+        file_size_mb = file_size_bytes / (1024 * 1024)
+        if file_size_mb > 50:
+            raise ValueError(f"视频大小约 {file_size_mb:.2f} MB，超过参考视频 50 MB 限制")
+
+        self._put_object_with_fallbacks(client, bucket.strip(), object_key, data, content_type)
+        signed_url = self._generate_presigned_url(client, bucket.strip(), object_key, expires_seconds)
+
+        result_info = [
+            "📤 TOS 上传成功",
+            f"🪣 Bucket: {bucket}",
+            f"🌍 Region: {region}",
+            f"🔗 Endpoint: {endpoint}",
+            f"📁 Object Key: {object_key}",
+            f"🎞️ 文件名: {source['filename']}",
+            f"📦 文件大小: {file_size_mb:.2f} MB",
+            f"⏳ 时效: {expires_seconds} 秒",
+            f"🔗 URL: {signed_url}",
+        ]
+
+        return (signed_url, object_key, "\n".join(result_info))
+
+
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
     "SeedreamImageGenerate": SeedreamImageGenerate,
     "SeedreamImageGenerateWithWebSearch": SeedreamImageGenerateWithWebSearch,
-    "SeedanceVideoGenerate": SeedanceVideoGenerate
+    "SeedanceVideoGenerate": SeedanceVideoGenerate,
+    "TOSUploadVideoURL": TOSUploadVideoURL
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SeedreamImageGenerate": "Seedream Image Generate",
     "SeedreamImageGenerateWithWebSearch": "Seedream Image Generate With Web Search",
-    "SeedanceVideoGenerate": "Seedance Video Generate"
+    "SeedanceVideoGenerate": "Seedance Video Generate",
+    "TOSUploadVideoURL": "TOS Upload Video URL"
 }
