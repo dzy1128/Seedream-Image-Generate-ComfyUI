@@ -2,6 +2,7 @@ import os
 import mimetypes
 import wave
 import uuid
+import hashlib
 from urllib.parse import urlparse
 import requests
 import torch
@@ -1151,6 +1152,10 @@ class TOSUploadVideoURL:
                     "step": 60,
                     "tooltip": "预签名 URL 时效，单位秒，范围 60-2592000（30天）"
                 }),
+                "reuse_existing": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "是否按文件内容哈希复用已上传对象。关闭时每次都会重新上传"
+                }),
                 "object_prefix": ("STRING", {
                     "default": "seedance/",
                     "tooltip": "上传到桶内的对象前缀"
@@ -1168,8 +1173,8 @@ class TOSUploadVideoURL:
             }
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("url", "object_key", "text")
+    RETURN_TYPES = ("STRING", "STRING", "BOOLEAN", "STRING")
+    RETURN_NAMES = ("url", "object_key", "is_reused", "text")
     FUNCTION = "upload_video"
     CATEGORY = "video/upload"
 
@@ -1236,12 +1241,41 @@ class TOSUploadVideoURL:
             raise ValueError(f"当前仅支持上传 .mp4 或 .mov，检测到: {ext or '无扩展名'}")
         return ext
 
-    def _build_object_key(self, object_prefix, filename):
+    def _build_object_key(self, object_prefix, filename, content_hash=None):
         prefix = (object_prefix or "").strip().strip("/")
         name, ext = os.path.splitext(os.path.basename(filename))
         safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name).strip("_") or "video"
-        object_name = f"{safe_name}_{uuid.uuid4().hex[:12]}{ext.lower()}"
+        if content_hash:
+            object_name = f"{safe_name}_{content_hash[:16]}{ext.lower()}"
+        else:
+            object_name = f"{safe_name}_{uuid.uuid4().hex[:12]}{ext.lower()}"
         return f"{prefix}/{object_name}" if prefix else object_name
+
+    def _hash_bytes(self, data):
+        return hashlib.sha256(data).hexdigest()
+
+    def _object_exists(self, client, bucket, object_key):
+        attempts = [
+            lambda: client.head_object(bucket=bucket, key=object_key),
+            lambda: client.head_object(bucket, object_key),
+        ]
+
+        for attempt in attempts:
+            try:
+                attempt()
+                return True
+            except Exception as e:
+                error_name = e.__class__.__name__
+                if error_name in ("TosServerError", "TosClientError"):
+                    status_code = getattr(e, "status_code", None)
+                    if status_code == 404:
+                        return False
+                    code = getattr(e, "code", None)
+                    if code in ("NoSuchKey", "NotFound"):
+                        return False
+                continue
+
+        return False
 
     def _put_object_with_fallbacks(self, client, bucket, object_key, data, content_type):
         attempts = [
@@ -1293,12 +1327,11 @@ class TOSUploadVideoURL:
 
         return str(result)
 
-    def upload_video(self, bucket, endpoint, region, expires_seconds, object_prefix, video=None, file_path=""):
+    def upload_video(self, bucket, endpoint, region, expires_seconds, reuse_existing, object_prefix, video=None, file_path=""):
         client = self._initialize_tos_client(endpoint, region)
         source = self._resolve_video_source(video=video, file_path=file_path)
         ext = self._validate_video_filename(source["filename"])
         content_type = mimetypes.guess_type(source["filename"])[0] or ("video/mp4" if ext == ".mp4" else "video/quicktime")
-        object_key = self._build_object_key(object_prefix, source["filename"])
 
         if source["kind"] == "path":
             file_size_bytes = os.path.getsize(source["path"])
@@ -1313,22 +1346,34 @@ class TOSUploadVideoURL:
         if file_size_mb > 50:
             raise ValueError(f"视频大小约 {file_size_mb:.2f} MB，超过参考视频 50 MB 限制")
 
-        self._put_object_with_fallbacks(client, bucket.strip(), object_key, data, content_type)
+        content_hash = self._hash_bytes(data)
+        if reuse_existing:
+            object_key = self._build_object_key(object_prefix, source["filename"], content_hash=content_hash)
+            reused_existing = self._object_exists(client, bucket.strip(), object_key)
+        else:
+            object_key = self._build_object_key(object_prefix, source["filename"])
+            reused_existing = False
+
+        if not reused_existing:
+            self._put_object_with_fallbacks(client, bucket.strip(), object_key, data, content_type)
         signed_url = self._generate_presigned_url(client, bucket.strip(), object_key, expires_seconds)
 
         result_info = [
-            "📤 TOS 上传成功",
+            "📤 TOS 上传成功" if not reused_existing else "♻️ 复用已有 TOS 对象",
             f"🪣 Bucket: {bucket}",
             f"🌍 Region: {region}",
             f"🔗 Endpoint: {endpoint}",
             f"📁 Object Key: {object_key}",
+            f"♻️ 复用开关: {'开启' if reuse_existing else '关闭'}",
+            f"♻️ 是否复用: {'是' if reused_existing else '否'}",
+            f"🧮 SHA256: {content_hash}",
             f"🎞️ 文件名: {source['filename']}",
             f"📦 文件大小: {file_size_mb:.2f} MB",
             f"⏳ 时效: {expires_seconds} 秒",
             f"🔗 URL: {signed_url}",
         ]
 
-        return (signed_url, object_key, "\n".join(result_info))
+        return (signed_url, object_key, reused_existing, "\n".join(result_info))
 
 
 # Node mappings for ComfyUI
