@@ -992,23 +992,35 @@ class SeedanceVideoGenerate:
         
         content = []
         input_modes = []
+        use_reference_mode = (video is not None) or (audio is not None)
         
         if image is not None:
             pil_img = self.tensor_to_pil(image.squeeze(0))
             img_url = self.image_to_base64_url(pil_img)
-            content.append({"type": "image_url", "image_url": {"url": img_url}})
+            image_item = {"type": "image_url", "image_url": {"url": img_url}}
+            if use_reference_mode:
+                image_item["role"] = "reference_image"
+            content.append(image_item)
             input_modes.append("图片")
             print(f"📸 使用输入图片")
         
         video_media_url = self._video_input_to_media_url(video)
         if video_media_url:
-            content.append({"type": "video_url", "video_url": {"url": video_media_url}})
+            content.append({
+                "type": "video_url",
+                "video_url": {"url": video_media_url},
+                "role": "reference_video"
+            })
             input_modes.append("视频")
             print(f"🎥 使用输入视频")
         
         audio_media_url = self._audio_input_to_media_url(audio)
         if audio_media_url:
-            content.append({"type": "audio_url", "audio_url": {"url": audio_media_url}})
+            content.append({
+                "type": "audio_url",
+                "audio_url": {"url": audio_media_url},
+                "role": "reference_audio"
+            })
             input_modes.append("音频")
             print(f"🔊 使用输入音频")
         
