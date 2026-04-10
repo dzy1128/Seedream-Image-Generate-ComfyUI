@@ -1,4 +1,5 @@
 import os
+import mimetypes
 import requests
 import torch
 import numpy as np
@@ -793,13 +794,15 @@ class SeedanceVideoGenerate:
                 "image": ("IMAGE", {"tooltip": "可选图片输入，用于图生视频"}),
                 "video": ("STRING", {
                     "default": "",
-                    "placeholder": "视频文件路径或URL...",
-                    "tooltip": "可选视频输入（本地文件路径或URL），用于视频生视频"
+                    "multiline": True,
+                    "placeholder": "视频URL、data URL、base64:... 或文件路径/文件名...",
+                    "tooltip": "可选视频输入：支持 http(s) URL、data URL、base64: 前缀、绝对/相对路径，以及 ComfyUI input/output/temp 目录中的文件名"
                 }),
                 "audio": ("STRING", {
                     "default": "",
-                    "placeholder": "音频文件路径或URL...",
-                    "tooltip": "可选音频输入（本地文件路径或URL），用于为视频添加音频驱动"
+                    "multiline": True,
+                    "placeholder": "音频URL、data URL、base64:... 或文件路径/文件名...",
+                    "tooltip": "可选音频输入：支持 http(s) URL、data URL、base64: 前缀、绝对/相对路径，以及 ComfyUI input/output/temp 目录中的文件名"
                 }),
             }
         }
@@ -842,6 +845,10 @@ class SeedanceVideoGenerate:
     
     def _detect_mime_type(self, file_path, category):
         """Detect MIME type from file extension"""
+        guessed_type, _ = mimetypes.guess_type(file_path)
+        if guessed_type and guessed_type.startswith(f"{category}/"):
+            return guessed_type
+
         ext = os.path.splitext(file_path)[1].lower()
         mime_maps = {
             "video": {
@@ -854,29 +861,113 @@ class SeedanceVideoGenerate:
             },
         }
         return mime_maps.get(category, {}).get(ext, f'{category}/mp4' if category == 'video' else f'{category}/mpeg')
-    
+
+    def _normalize_media_input(self, input_str):
+        if input_str is None:
+            return ""
+
+        normalized = str(input_str).strip()
+        if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in ("'", '"'):
+            normalized = normalized[1:-1].strip()
+        return os.path.expanduser(normalized)
+
+    def _get_media_search_directories(self):
+        search_dirs = [os.getcwd()]
+
+        for getter_name in ("get_input_directory", "get_output_directory", "get_temp_directory"):
+            getter = getattr(folder_paths, getter_name, None)
+            if callable(getter):
+                try:
+                    directory = getter()
+                except Exception:
+                    directory = None
+                if directory:
+                    search_dirs.append(directory)
+
+        unique_dirs = []
+        seen = set()
+        for directory in search_dirs:
+            normalized = os.path.abspath(directory)
+            if normalized not in seen:
+                seen.add(normalized)
+                unique_dirs.append(normalized)
+        return unique_dirs
+
+    def _resolve_local_media_path(self, input_str):
+        candidates = []
+
+        if input_str.startswith("file://"):
+            candidates.append(input_str[7:])
+        else:
+            candidates.append(input_str)
+
+        if not os.path.isabs(input_str):
+            for base_dir in self._get_media_search_directories():
+                candidates.append(os.path.join(base_dir, input_str))
+
+        seen = set()
+        for candidate in candidates:
+            normalized = os.path.abspath(candidate)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            if os.path.isfile(normalized):
+                return normalized
+        return None
+
+    def _is_probable_base64(self, value):
+        import base64
+        import binascii
+
+        compact = "".join(value.split())
+        if len(compact) < 128 or len(compact) % 4 != 0:
+            return False
+
+        try:
+            base64.b64decode(compact, validate=True)
+            return True
+        except (binascii.Error, ValueError):
+            return False
+
+    def _base64_to_data_url(self, base64_value, media_type):
+        compact = "".join(base64_value.split())
+        return f"data:{media_type};base64,{compact}"
+
     def _resolve_media_url(self, input_str, category):
         """
         Resolve a media input string to a URL suitable for the API.
-        Supports: http(s) URL (pass through), local file path (convert to base64).
+        Supports: http(s) URL, data URL, base64 payload, local file path,
+        or filename under ComfyUI input/output/temp directories.
         """
-        if not input_str or not input_str.strip():
+        input_str = self._normalize_media_input(input_str)
+        if not input_str:
             return None
-        
-        input_str = input_str.strip()
-        
+
         if input_str.startswith(('http://', 'https://')):
             return input_str
-        
+
         if input_str.startswith('data:'):
             return input_str
-        
-        if os.path.isfile(input_str):
-            mime_type = self._detect_mime_type(input_str, category)
-            print(f"   📂 读取本地{category}文件: {input_str} ({mime_type})")
-            return self.file_to_base64_url(input_str, mime_type)
-        
-        raise ValueError(f"{category}输入无效: '{input_str}' 既不是有效URL也不是存在的本地文件路径")
+
+        if input_str.startswith('base64:'):
+            media_type = 'video/mp4' if category == 'video' else 'audio/mpeg'
+            print(f"   🧾 解析{category} Base64输入")
+            return self._base64_to_data_url(input_str[7:], media_type)
+
+        if self._is_probable_base64(input_str):
+            media_type = 'video/mp4' if category == 'video' else 'audio/mpeg'
+            print(f"   🧾 解析原始{category} Base64输入")
+            return self._base64_to_data_url(input_str, media_type)
+
+        local_file_path = self._resolve_local_media_path(input_str)
+        if local_file_path:
+            mime_type = self._detect_mime_type(local_file_path, category)
+            print(f"   📂 读取本地{category}文件: {local_file_path} ({mime_type})")
+            return self.file_to_base64_url(local_file_path, mime_type)
+
+        raise ValueError(
+            f"{category}输入无效: '{input_str}' 既不是有效URL/data URL/base64，也不是存在的本地文件路径或 ComfyUI 媒体文件名"
+        )
     
     def _extract_video_url(self, result):
         """Extract video URL from task result based on actual API response format:
