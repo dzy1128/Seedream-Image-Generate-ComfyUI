@@ -1261,7 +1261,12 @@ class TOSUploadVideoURL:
             raise last_error
 
     def _generate_presigned_url(self, client, bucket, object_key, expires_seconds):
+        tos = self._import_tos()
+        http_method = getattr(getattr(tos, "HttpMethodType", None), "Http_Method_Get", None)
+
         attempts = [
+            lambda: client.pre_signed_url(http_method=http_method, bucket=bucket, key=object_key, expires=expires_seconds) if http_method is not None else (_ for _ in ()).throw(TypeError("HttpMethodType unavailable")),
+            lambda: client.pre_signed_url(http_method, bucket, object_key, expires_seconds) if http_method is not None else (_ for _ in ()).throw(TypeError("HttpMethodType unavailable")),
             lambda: client.pre_signed_url(http_method="GET", bucket=bucket, key=object_key, expires=expires_seconds),
             lambda: client.pre_signed_url("GET", bucket, object_key, expires_seconds),
         ]
