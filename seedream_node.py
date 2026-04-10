@@ -1,5 +1,6 @@
 import os
 import mimetypes
+import wave
 import requests
 import torch
 import numpy as np
@@ -792,18 +793,8 @@ class SeedanceVideoGenerate:
             },
             "optional": {
                 "image": ("IMAGE", {"tooltip": "可选图片输入，用于图生视频"}),
-                "video": ("STRING", {
-                    "default": "",
-                    "multiline": True,
-                    "placeholder": "视频URL、data URL、base64:... 或文件路径/文件名...",
-                    "tooltip": "可选视频输入：支持 http(s) URL、data URL、base64: 前缀、绝对/相对路径，以及 ComfyUI input/output/temp 目录中的文件名"
-                }),
-                "audio": ("STRING", {
-                    "default": "",
-                    "multiline": True,
-                    "placeholder": "音频URL、data URL、base64:... 或文件路径/文件名...",
-                    "tooltip": "可选音频输入：支持 http(s) URL、data URL、base64: 前缀、绝对/相对路径，以及 ComfyUI input/output/temp 目录中的文件名"
-                }),
+                "video": ("VIDEO", {"tooltip": "可选视频输入，用于视频生视频；可连接 ComfyUI 的 LoadVideo / CreateVideo 等节点输出"}),
+                "audio": ("AUDIO", {"tooltip": "可选音频输入，用于为视频添加音频驱动；可连接 ComfyUI 的 LoadAudio / GetVideoComponents 等节点输出"}),
             }
         }
     
@@ -842,6 +833,11 @@ class SeedanceVideoGenerate:
             data = f.read()
         b64 = base64.b64encode(data).decode('utf-8')
         return f"data:{media_type};base64,{b64}"
+
+    def bytes_to_base64_url(self, data, media_type):
+        import base64
+        b64 = base64.b64encode(data).decode('utf-8')
+        return f"data:{media_type};base64,{b64}"
     
     def _detect_mime_type(self, file_path, category):
         """Detect MIME type from file extension"""
@@ -862,112 +858,75 @@ class SeedanceVideoGenerate:
         }
         return mime_maps.get(category, {}).get(ext, f'{category}/mp4' if category == 'video' else f'{category}/mpeg')
 
-    def _normalize_media_input(self, input_str):
-        if input_str is None:
-            return ""
-
-        normalized = str(input_str).strip()
-        if len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in ("'", '"'):
-            normalized = normalized[1:-1].strip()
-        return os.path.expanduser(normalized)
-
-    def _get_media_search_directories(self):
-        search_dirs = [os.getcwd()]
-
-        for getter_name in ("get_input_directory", "get_output_directory", "get_temp_directory"):
-            getter = getattr(folder_paths, getter_name, None)
-            if callable(getter):
-                try:
-                    directory = getter()
-                except Exception:
-                    directory = None
-                if directory:
-                    search_dirs.append(directory)
-
-        unique_dirs = []
-        seen = set()
-        for directory in search_dirs:
-            normalized = os.path.abspath(directory)
-            if normalized not in seen:
-                seen.add(normalized)
-                unique_dirs.append(normalized)
-        return unique_dirs
-
-    def _resolve_local_media_path(self, input_str):
-        candidates = []
-
-        if input_str.startswith("file://"):
-            candidates.append(input_str[7:])
-        else:
-            candidates.append(input_str)
-
-        if not os.path.isabs(input_str):
-            for base_dir in self._get_media_search_directories():
-                candidates.append(os.path.join(base_dir, input_str))
-
-        seen = set()
-        for candidate in candidates:
-            normalized = os.path.abspath(candidate)
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            if os.path.isfile(normalized):
-                return normalized
-        return None
-
-    def _is_probable_base64(self, value):
-        import base64
-        import binascii
-
-        compact = "".join(value.split())
-        if len(compact) < 128 or len(compact) % 4 != 0:
-            return False
-
-        try:
-            base64.b64decode(compact, validate=True)
-            return True
-        except (binascii.Error, ValueError):
-            return False
-
-    def _base64_to_data_url(self, base64_value, media_type):
-        compact = "".join(base64_value.split())
-        return f"data:{media_type};base64,{compact}"
-
-    def _resolve_media_url(self, input_str, category):
-        """
-        Resolve a media input string to a URL suitable for the API.
-        Supports: http(s) URL, data URL, base64 payload, local file path,
-        or filename under ComfyUI input/output/temp directories.
-        """
-        input_str = self._normalize_media_input(input_str)
-        if not input_str:
+    def _video_input_to_media_url(self, video):
+        if video is None:
             return None
 
-        if input_str.startswith(('http://', 'https://')):
-            return input_str
+        stream_source = None
+        if hasattr(video, "get_stream_source"):
+            stream_source = video.get_stream_source()
 
-        if input_str.startswith('data:'):
-            return input_str
+        if isinstance(stream_source, str) and os.path.isfile(stream_source):
+            mime_type = self._detect_mime_type(stream_source, "video")
+            print(f"   📂 读取VIDEO输入文件: {stream_source} ({mime_type})")
+            return self.file_to_base64_url(stream_source, mime_type)
 
-        if input_str.startswith('base64:'):
-            media_type = 'video/mp4' if category == 'video' else 'audio/mpeg'
-            print(f"   🧾 解析{category} Base64输入")
-            return self._base64_to_data_url(input_str[7:], media_type)
+        if stream_source is not None:
+            if hasattr(stream_source, "seek"):
+                stream_source.seek(0)
+            if hasattr(stream_source, "read"):
+                video_bytes = stream_source.read()
+                container_format = None
+                if hasattr(video, "get_container_format"):
+                    try:
+                        container_format = video.get_container_format()
+                    except Exception:
+                        container_format = None
+                mime_type = self._detect_mime_type(
+                    f"input.{(container_format or 'mp4').split(',')[0].lower()}",
+                    "video"
+                )
+                print(f"   📦 读取VIDEO流输入 ({mime_type})")
+                return self.bytes_to_base64_url(video_bytes, mime_type)
 
-        if self._is_probable_base64(input_str):
-            media_type = 'video/mp4' if category == 'video' else 'audio/mpeg'
-            print(f"   🧾 解析原始{category} Base64输入")
-            return self._base64_to_data_url(input_str, media_type)
+        raise ValueError("video 输入无法解析，请确认连接的是有效的 ComfyUI VIDEO 类型输出")
 
-        local_file_path = self._resolve_local_media_path(input_str)
-        if local_file_path:
-            mime_type = self._detect_mime_type(local_file_path, category)
-            print(f"   📂 读取本地{category}文件: {local_file_path} ({mime_type})")
-            return self.file_to_base64_url(local_file_path, mime_type)
+    def _audio_input_to_media_url(self, audio):
+        if audio is None:
+            return None
 
-        raise ValueError(
-            f"{category}输入无效: '{input_str}' 既不是有效URL/data URL/base64，也不是存在的本地文件路径或 ComfyUI 媒体文件名"
-        )
+        if not isinstance(audio, dict):
+            raise ValueError("audio 输入无法解析，请确认连接的是有效的 ComfyUI AUDIO 类型输出")
+
+        waveform = audio.get("waveform")
+        sample_rate = audio.get("sample_rate")
+        if waveform is None or sample_rate is None:
+            raise ValueError("AUDIO 输入缺少 waveform 或 sample_rate")
+
+        if not isinstance(waveform, torch.Tensor):
+            waveform = torch.tensor(waveform)
+
+        waveform = waveform.detach().cpu()
+        if waveform.ndim == 3:
+            waveform = waveform[0]
+        elif waveform.ndim == 1:
+            waveform = waveform.unsqueeze(0)
+
+        if waveform.ndim != 2:
+            raise ValueError(f"AUDIO waveform 维度不正确: {tuple(waveform.shape)}")
+
+        waveform = waveform.clamp(-1.0, 1.0)
+        pcm16 = (waveform.numpy().T * 32767.0).astype(np.int16)
+
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(pcm16.shape[1] if pcm16.ndim == 2 else 1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(int(sample_rate))
+            wav_file.writeframes(pcm16.tobytes())
+
+        print(f"   🔊 读取AUDIO输入: {pcm16.shape[0]} samples @ {sample_rate}Hz")
+        return self.bytes_to_base64_url(buffer.getvalue(), "audio/wav")
     
     def _extract_video_url(self, result):
         """Extract video URL from task result based on actual API response format:
@@ -1025,7 +984,7 @@ class SeedanceVideoGenerate:
         return file_path
     
     def generate_video(self, prompt, model, duration, watermark, base_url,
-                       poll_interval, max_wait_time, image=None, video="", audio=""):
+                       poll_interval, max_wait_time, image=None, video=None, audio=None):
         self.initialize_client(base_url)
         
         wm_str = "true" if watermark else "false"
@@ -1041,13 +1000,13 @@ class SeedanceVideoGenerate:
             input_modes.append("图片")
             print(f"📸 使用输入图片")
         
-        video_media_url = self._resolve_media_url(video, "video")
+        video_media_url = self._video_input_to_media_url(video)
         if video_media_url:
             content.append({"type": "video_url", "video_url": {"url": video_media_url}})
             input_modes.append("视频")
             print(f"🎥 使用输入视频")
         
-        audio_media_url = self._resolve_media_url(audio, "audio")
+        audio_media_url = self._audio_input_to_media_url(audio)
         if audio_media_url:
             content.append({"type": "input_audio", "input_audio": {"url": audio_media_url}})
             input_modes.append("音频")
