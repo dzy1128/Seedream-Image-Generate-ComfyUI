@@ -1,6 +1,7 @@
 import os
 import mimetypes
 import wave
+from urllib.parse import urlparse
 import requests
 import torch
 import numpy as np
@@ -793,7 +794,12 @@ class SeedanceVideoGenerate:
             },
             "optional": {
                 "image": ("IMAGE", {"tooltip": "可选图片输入，用于图生视频"}),
-                "video": ("VIDEO", {"tooltip": "可选视频输入，用于视频生视频；可连接 ComfyUI 的 LoadVideo / CreateVideo 等节点输出"}),
+                "video": ("VIDEO", {"tooltip": "保留输入口。当前 Seedance 参考视频要求公网 URL，本地 VIDEO 输入不会直接上传，请优先使用 video_url"}),
+                "video_url": ("STRING", {
+                    "default": "",
+                    "placeholder": "https://example.com/reference.mp4",
+                    "tooltip": "参考视频公网 URL。当前按官方要求仅建议使用 .mp4 / .mov 的可访问 web url"
+                }),
                 "audio": ("AUDIO", {"tooltip": "可选音频输入，用于为视频添加音频驱动；可连接 ComfyUI 的 LoadAudio / GetVideoComponents 等节点输出"}),
             }
         }
@@ -862,34 +868,46 @@ class SeedanceVideoGenerate:
         if video is None:
             return None
 
-        stream_source = None
-        if hasattr(video, "get_stream_source"):
-            stream_source = video.get_stream_source()
+        raise ValueError(
+            "Seedance 当前要求 reference_video 必须是公网可访问的 http(s) URL，"
+            "不能直接使用 ComfyUI 本地 VIDEO 输入。请改用 video_url 参数填写公开视频地址。"
+        )
 
-        if isinstance(stream_source, str) and os.path.isfile(stream_source):
-            mime_type = self._detect_mime_type(stream_source, "video")
-            print(f"   📂 读取VIDEO输入文件: {stream_source} ({mime_type})")
-            return self.file_to_base64_url(stream_source, mime_type)
+    def _resolve_reference_video_url(self, video_url):
+        if video_url is None:
+            return None
 
-        if stream_source is not None:
-            if hasattr(stream_source, "seek"):
-                stream_source.seek(0)
-            if hasattr(stream_source, "read"):
-                video_bytes = stream_source.read()
-                container_format = None
-                if hasattr(video, "get_container_format"):
-                    try:
-                        container_format = video.get_container_format()
-                    except Exception:
-                        container_format = None
-                mime_type = self._detect_mime_type(
-                    f"input.{(container_format or 'mp4').split(',')[0].lower()}",
-                    "video"
-                )
-                print(f"   📦 读取VIDEO流输入 ({mime_type})")
-                return self.bytes_to_base64_url(video_bytes, mime_type)
+        normalized = str(video_url).strip()
+        if not normalized:
+            return None
 
-        raise ValueError("video 输入无法解析，请确认连接的是有效的 ComfyUI VIDEO 类型输出")
+        if normalized.startswith(("http://", "https://")):
+            parsed = urlparse(normalized)
+            path = parsed.path.lower()
+            if not path.endswith((".mp4", ".mov")):
+                raise ValueError("video_url 当前仅支持 .mp4 或 .mov 的公网地址")
+            return normalized
+
+        raise ValueError("video_url 必须是公网可访问的 http(s) 地址，例如 https://example.com/reference.mp4")
+
+    def _validate_audio_constraints(self, waveform, sample_rate):
+        channels = waveform.shape[0]
+        num_samples = waveform.shape[1]
+        duration_seconds = num_samples / float(sample_rate)
+
+        if duration_seconds < 2 or duration_seconds > 15:
+            raise ValueError(
+                f"AUDIO 单段时长需在 2-15 秒之间，当前约为 {duration_seconds:.2f} 秒"
+            )
+
+        estimated_wav_bytes = num_samples * channels * 2 + 44
+        estimated_wav_mb = estimated_wav_bytes / (1024 * 1024)
+        if estimated_wav_mb > 15:
+            raise ValueError(
+                f"AUDIO 估算大小约 {estimated_wav_mb:.2f} MB，超过单段 15 MB 限制"
+            )
+
+        return duration_seconds, estimated_wav_mb
 
     def _audio_input_to_media_url(self, audio):
         if audio is None:
@@ -916,6 +934,7 @@ class SeedanceVideoGenerate:
             raise ValueError(f"AUDIO waveform 维度不正确: {tuple(waveform.shape)}")
 
         waveform = waveform.clamp(-1.0, 1.0)
+        duration_seconds, estimated_wav_mb = self._validate_audio_constraints(waveform, sample_rate)
         pcm16 = (waveform.numpy().T * 32767.0).astype(np.int16)
 
         buffer = io.BytesIO()
@@ -925,7 +944,7 @@ class SeedanceVideoGenerate:
             wav_file.setframerate(int(sample_rate))
             wav_file.writeframes(pcm16.tobytes())
 
-        print(f"   🔊 读取AUDIO输入: {pcm16.shape[0]} samples @ {sample_rate}Hz")
+        print(f"   🔊 读取AUDIO输入: {pcm16.shape[0]} samples @ {sample_rate}Hz, 时长约 {duration_seconds:.2f} 秒, 估算 {estimated_wav_mb:.2f} MB")
         return self.bytes_to_base64_url(buffer.getvalue(), "audio/wav")
     
     def _extract_video_url(self, result):
@@ -984,7 +1003,7 @@ class SeedanceVideoGenerate:
         return file_path
     
     def generate_video(self, prompt, model, duration, watermark, base_url,
-                       poll_interval, max_wait_time, image=None, video=None, audio=None):
+                       poll_interval, max_wait_time, image=None, video=None, video_url="", audio=None):
         self.initialize_client(base_url)
         
         wm_str = "true" if watermark else "false"
@@ -992,7 +1011,8 @@ class SeedanceVideoGenerate:
         
         content = []
         input_modes = []
-        use_reference_mode = (video is not None) or (audio is not None)
+        reference_video_url = self._resolve_reference_video_url(video_url)
+        use_reference_mode = (reference_video_url is not None) or (video is not None) or (audio is not None)
         
         if image is not None:
             pil_img = self.tensor_to_pil(image.squeeze(0))
@@ -1004,7 +1024,9 @@ class SeedanceVideoGenerate:
             input_modes.append("图片")
             print(f"📸 使用输入图片")
         
-        video_media_url = self._video_input_to_media_url(video)
+        video_media_url = reference_video_url
+        if not video_media_url and video is not None:
+            video_media_url = self._video_input_to_media_url(video)
         if video_media_url:
             content.append({
                 "type": "video_url",
