@@ -21,9 +21,26 @@ Author: Custom Node for ComfyUI
 Version: 1.0.0
 """
 
-from .seedream_node import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+from .seedream_node import NODE_CLASS_MAPPINGS as SEEDREAM_NODE_CLASS_MAPPINGS
+from .seedream_node import NODE_DISPLAY_NAME_MAPPINGS as SEEDREAM_NODE_DISPLAY_NAME_MAPPINGS
+from .seedance2_nodes import NODE_CLASS_MAPPINGS as SEEDANCE2_NODE_CLASS_MAPPINGS
+from .seedance2_nodes import NODE_DISPLAY_NAME_MAPPINGS as SEEDANCE2_NODE_DISPLAY_NAME_MAPPINGS
+
+# Merge node mappings from both files
+NODE_CLASS_MAPPINGS = {**SEEDREAM_NODE_CLASS_MAPPINGS, **SEEDANCE2_NODE_CLASS_MAPPINGS}
+NODE_DISPLAY_NAME_MAPPINGS = {**SEEDREAM_NODE_DISPLAY_NAME_MAPPINGS, **SEEDANCE2_NODE_DISPLAY_NAME_MAPPINGS}
 
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
 
 # ComfyUI will automatically load these mappings
-WEB_DIRECTORY = "./web"
+WEB_DIRECTORY = "./util"
+
+# 注册服务器路由
+try:
+    from comfy import PromptServer
+except ImportError:
+    from server import PromptServer
+
+from .util.routes import setup_routes
+
+setup_routes(PromptServer.instance.app)

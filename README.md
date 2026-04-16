@@ -1,6 +1,6 @@
 # Seedream Image Generate ComfyUI Node
 
-一个基于火山引擎豆包大模型Seedream API的ComfyUI自定义节点，用于高质量图像生成。
+一个基于火山引擎豆包大模型Seedream API和Seedance视频生成API的ComfyUI自定义节点，用于高质量图像和视频生成。
 
 <!-- 
 使用示例：添加节点界面截图
@@ -15,6 +15,7 @@
 3. 选择你的API_KEY，点击<选择使用>，然后点击开通模型。
 ## 功能特性
 
+### 图像生成 (Seedream)
 - 🎨 **多模型支持**: 支持doubao-seedream系列模型
 - 🖼️ **多图像输入**: 支持最多5张输入图像（1张必选，4张可选）
 - 📐 **灵活宽高比**: 支持常见宽高比选择（1:1, 2:3, 3:2, 4:3, 3:4, 16:9, 9:16, 21:9）
@@ -23,12 +24,20 @@
 - 🎯 **多图输出**: 支持一次生成多张图像
 - 📄 **详细信息输出**: 提供生成过程的详细文本信息
 
+### 视频生成 (Seedance)
+- 🎬 **视频生成**: 支持doubao-seedance系列模型
+- 🖼️ **多模态输入**: 支持图片、音频、视频作为输入
+- 📐 **灵活分辨率**: 支持480p、720p分辨率
+- 🎵 **音频驱动**: 支持音频输入驱动视频生成
+- 🔗 **TOS上传**: 支持上传本地视频到火山TOS获取URL
+- ⏱️ **轮询配置**: 节点界面可直接配置轮询参数
+
 ## 安装要求
 
 1. 确保已安装ComfyUI
 2. 安装依赖包：
 ```bash
-pip install volcengine-python-sdk[ark]
+pip install volcengine-python-sdk[ark] tos
 ```
 
 ## 配置
@@ -41,22 +50,35 @@ pip install volcengine-python-sdk[ark]
 export ARK_API_KEY="your_api_key_here"
 ```
 
+### TOS配置（视频上传功能需要）
+如需使用视频上传功能，还需设置TOS密钥：
+```bash
+export TOS_ACCESS_KEY="your_tos_access_key"
+export TOS_SECRET_KEY="your_tos_secret_key"
+```
+
 ### 安装节点
 1. 将此文件夹复制到ComfyUI的`custom_nodes`目录
 2. 重启ComfyUI
-3. 在节点菜单中找到 "image/generation" → "Seedream Image Generate"
+3. 在节点菜单中找到以下节点：
+   - **image/generation** → "Seedream Image Generate"（图像生成）
+   - **video/generation** → "Seedance Video Generate"（视频生成 - 单输入）
+   - **Doubao/Seedance** → "Seedance2 视频生成"（视频生成 - 多模态输入）
 
 ## 节点参数说明
 
-### 必需参数
+### Seedream Image Generate（图像生成）
+
+#### 必需参数
 - **prompt**: 图像生成提示词（支持中英文）
 - **model**: 选择生成模型
   - `doubao-seedream-4-0-250828` (默认)
   - `doubao-seedream-4-5-251128`
+  - `doubao-seedream-5-0-260128`
 - **aspect_ratio**: 图像宽高比
   - 1:1 (2048x2048), 2:3 (1664x2496), 3:2 (2496x1664), 4:3 (2304x1728), 3:4 (1728x2304), 16:9 (2560x1440), 9:16 (1440x2560), 21:9 (3024x1296), 2K, 3K, 3.5K, 4K
 
-### 输出参数
+#### 输出参数
 - **images**: 生成的图像列表
 - **text**: 详细的生成信息文本，包括：
   - 生成参数信息
@@ -93,6 +115,70 @@ export ARK_API_KEY="your_api_key_here"
 - **use_local_images**: 启用本地图像Base64编码（默认开启，官方支持）
 - **seed**: 种子值（用于工作流跟踪，支持大整数）
 - **enable_auto_retry**: 启用自动重试机制（默认开启，处理云端工作流异步问题）
+
+---
+
+### Seedance Video Generate（视频生成 - 单输入）
+
+#### 必需参数
+- **prompt**: 视频生成提示词
+- **model**: `doubao-seedance-2-0-260128`
+- **duration**: 视频时长（1-10秒）
+- **watermark**: 是否添加水印
+- **poll_interval**: 轮询间隔（1-30秒，默认3秒）
+- **max_wait_time**: 最大等待时间（60-3600秒，默认600秒）
+
+#### 可选参数
+- **image**: 输入图片（图生视频）
+- **video_url**: 参考视频URL
+- **audio**: 音频输入
+
+---
+
+### Seedance2 视频生成（视频生成 - 多模态输入）
+
+#### 必需参数
+- **prompt**: 视频生成提示词
+- **model**: 
+  - `doubao-seedance-2-0-260128`
+  - `doubao-seedance-2-0-fast-260128`
+- **resolution**: 分辨率 (480p/720p)
+- **ratio**: 宽高比 (16:9, 9:16, 1:1, 4:3, 3:4, 21:9)
+- **duration**: 时长（4-15秒，默认11秒）
+- **generate_audio**: 是否生成音频
+- **poll_interval**: 轮询间隔（1-30秒，默认30秒）
+- **max_wait_time**: 最大等待时间（60-3600秒，默认3600秒）
+
+#### 可选参数
+- **image_list**: 图片列表（连接 Seedance2 图片聚合节点，最多9张）
+- **audio_list**: 音频列表（连接 Seedance2 音频聚合节点，最多3个）
+- **video_url_list**: 视频URL列表（连接 Seedance2 视频聚合节点，最多3个）
+- **seed**: 种子值
+
+#### 辅助节点
+- **Seedance2 图片聚合**: 聚合0-9张图片
+- **Seedance2 音频聚合**: 聚合0-3个音频
+- **Seedance2 视频聚合**: 上传0-3个本地视频到TOS，返回URL列表
+  - 必需参数：bucket, endpoint, region, expires_seconds, reuse_existing, object_prefix
+  - 可选参数：path_1, path_2, path_3
+
+---
+
+### TOS Upload Video URL（视频上传）
+
+用于将本地视频上传到火山TOS获取预签名URL。
+
+#### 必需参数
+- **bucket**: TOS桶名称
+- **endpoint**: TOS Endpoint（默认: tos-cn-beijing.volces.com）
+- **region**: 地域（默认: cn-beijing）
+- **expires_seconds**: URL有效期（60-2592000秒，默认3600）
+- **reuse_existing**: 是否复用已有对象
+- **object_prefix**: 对象前缀（默认: seedance/）
+
+#### 可选参数
+- **video**: VIDEO输入
+- **file_path**: 本地文件路径
 
 ## 使用示例
 
@@ -182,12 +268,42 @@ export ARK_API_KEY="your_api_key_here"
 - 启用 `use_local_images=True`（默认）时会自动转换本地图像为Base64格式
 - 如果Base64转换失败，会自动回退到示例图像确保稳定性
 
+## 视频生成工作流示例
+
+### 基础视频生成（单图片输入）
+```
+LoadImage → Seedance Video Generate → 视频输出
+                ↑
+            prompt: "一只猫在跳舞"
+            duration: 5
+```
+
+### 多模态视频生成（Seedance2）
+```
+LoadImage (x3) → Seedance2 图片聚合 ─┐
+                                      ├→ Seedance2 视频生成 → 视频输出
+LoadAudio (x2) → Seedance2 音频聚合 ─┘
+                prompt: "根据图片和音频生成视频"
+                resolution: "720p"
+```
+
+### 本地视频作为参考输入
+```
+LoadVideo → Seedance2 视频聚合（上传到TOS）→ video_url_list
+                                                  ↓
+LoadImage → Seedance2 图片聚合 ─────────────────→ Seedance2 视频生成
+                                                  ↑
+                                        prompt: "参考视频风格生成新视频"
+```
+
 ## 故障排除
 
 1. **API Key错误**: 确保正确设置ARK_API_KEY环境变量
-2. **网络错误**: 确保网络连接正常，可以访问火山引擎服务
-3. **图像加载失败**: 检查输入图像格式是否支持
-4. **依赖包问题**: 确保已安装 `pip install 'volcengine-python-sdk[ark]'`
+2. **TOS密钥错误**: 视频上传功能需要设置TOS_ACCESS_KEY和TOS_SECRET_KEY
+3. **网络错误**: 确保网络连接正常，可以访问火山引擎服务
+4. **图像加载失败**: 检查输入图像格式是否支持
+5. **依赖包问题**: 确保已安装 `pip install 'volcengine-python-sdk[ark] tos'`
+6. **视频上传失败**: 检查TOS桶名称、Endpoint和密钥是否正确
 
 ## 支持与反馈
 
