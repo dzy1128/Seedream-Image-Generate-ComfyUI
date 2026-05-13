@@ -3,6 +3,7 @@ import mimetypes
 import wave
 import uuid
 import hashlib
+import re
 from urllib.parse import urlparse
 import requests
 import torch
@@ -224,6 +225,16 @@ class SeedreamImageGenerate:
         }
         return ratio_map.get(aspect_ratio, "2048x2048")
     
+    def _resolve_size(self, size_input):
+        """Resolve node size input into API size parameter"""
+        return self.aspect_ratio_to_size(size_input)
+    
+    def _size_result_label(self):
+        return "宽高比"
+    
+    def _raise_when_no_output_tensor(self):
+        return False
+    
     def download_image_from_url(self, url):
         """Download image from URL and convert to tensor"""
         try:
@@ -336,8 +347,8 @@ class SeedreamImageGenerate:
                 url = self.convert_image_to_supported_format(pil_img, use_local_images)
                 image_urls.append(url)
                 
-            # Convert aspect ratio to size
-            size = self.aspect_ratio_to_size(aspect_ratio)
+            # Convert size input to API size parameter
+            size = self._resolve_size(aspect_ratio)
             
             # Prepare generation options
             # 使用SDK的SequentialImageGenerationOptions类
@@ -486,7 +497,7 @@ class SeedreamImageGenerate:
             result_info.append(f"🎨 生成信息:")
             result_info.append(f"📝 提示词: {prompt}")
             result_info.append(f"🔧 模型: {model}")
-            result_info.append(f"📐 宽高比: {aspect_ratio}")
+            result_info.append(f"📐 {self._size_result_label()}: {aspect_ratio}")
             result_info.append(f"🔄 顺序生成: {sequential_image_generation}")
             result_info.append(f"   └─ max_images: {max_images} (sequential_image_generation_options)")
             result_info.append(f"🖼️ 生成数量: {len(all_image_data)}")
@@ -545,6 +556,8 @@ class SeedreamImageGenerate:
             result_info.append(f"   🌐 API地址: {base_url}")
             
             if not output_tensors:
+                if self._raise_when_no_output_tensor():
+                    raise ValueError("图片生成失败：API 返回了图片数据，但未能解析或下载出有效图像")
                 # Return a placeholder if no images generated
                 placeholder = Image.new('RGB', (512, 512), color='black')
                 output_tensors = [self.pil_to_tensor(placeholder)]
@@ -629,7 +642,7 @@ class SeedreamImageGenerate:
             error_text_parts.extend([
                 f"📝 提示词: {prompt}",
                 f"🔧 模型: {model}",
-                f"📐 宽高比: {aspect_ratio}",
+                f"📐 {self._size_result_label()}: {aspect_ratio}",
                 f"🔄 顺序生成: {sequential_image_generation}",
                 f"🖼️ 最大图像数: {max_images}",
                 f"🌐 API地址: {base_url}",
@@ -655,6 +668,163 @@ class SeedreamImageGenerate:
             
             # 抛出异常让ComfyUI显示报错弹窗，不输出红图
             raise RuntimeError(error_text)
+
+class SeedreamImageGenerateV2(SeedreamImageGenerate):
+    """
+    Seedream image generation node using direct resolution input.
+    """
+    
+    COMMON_RESOLUTIONS = [
+        "1K",
+        "2K",
+        "4K",
+        "2560x1440",
+        "1440x2560",
+        "2048x2048",
+        "2304x1728",
+        "1728x2304",
+        "2496x1664",
+        "1664x2496",
+        "3200x2000",
+        "2000x3200",
+        "3024x1296",
+        "3072x2048",
+        "2048x3072",
+        "3840x2160",
+        "2160x3840",
+        "4096x2160",
+        "2160x4096",
+        "4096x4096",
+    ]
+    MIN_TOTAL_PIXELS = 2560 * 1440
+    MAX_TOTAL_PIXELS = 4096 * 4096
+    MIN_ASPECT_RATIO = 1 / 16
+    MAX_ASPECT_RATIO = 16
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "prompt": ("STRING", {
+                    "multiline": True,
+                    "default": "",
+                    "placeholder": "Enter your image generation prompt here..."
+                }),
+                "model": (["doubao-seedream-4-0-250828", "doubao-seedream-4-5-251128", "doubao-seedream-5-0-260128"], {
+                    "default": "doubao-seedream-4-0-250828"
+                }),
+                "resolution": (cls.COMMON_RESOLUTIONS, {
+                    "default": "2K",
+                    "allow_custom": True,
+                    "tooltip": "直接传给API的分辨率。可从列表选择，也可手动输入如 2560x1440；支持1K/2K/4K档位"
+                }),
+                "sequential_image_generation": (["auto", "enabled", "disabled"], {
+                    "default": "auto",
+                    "tooltip": "顺序生成模式：auto=自动，enabled=启用，disabled=禁用"
+                }),
+                "max_images": ("INT", {
+                    "default": 1,
+                    "min": 1,
+                    "max": 10,
+                    "step": 1,
+                    "tooltip": "sequential_image_generation_options.max_images - 最大生成图片数量（用于顺序生成）"
+                }),
+                "response_format": (["url", "b64_json"], {
+                    "default": "url"
+                }),
+                "watermark": ("BOOLEAN", {
+                    "default": False
+                }),
+                "stream": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "流式传输模式 - 启用后与max_images配合可生成多张图片"
+                }),
+                "base_url": ("STRING", {
+                    "default": "https://ark.cn-beijing.volces.com/api/v3"
+                }),
+                "use_local_images": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "使用本地图像（Base64格式，官方支持）"
+                }),
+                "seed": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 18446744073709551615,
+                    "step": 1
+                }),
+                "enable_auto_retry": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "启用自动重试机制，处理云端工作流的异步执行问题"
+                }),
+            },
+            "optional": {
+                "image1": ("IMAGE",),
+                "image2": ("IMAGE",),
+                "image3": ("IMAGE",),
+                "image4": ("IMAGE",),
+                "image5": ("IMAGE",)
+            }
+        }
+    
+    FUNCTION = "generate_images_v2"
+    
+    def _size_result_label(self):
+        return "分辨率"
+    
+    def _raise_when_no_output_tensor(self):
+        return True
+    
+    def _resolve_size(self, resolution):
+        normalized = str(resolution).strip()
+        if normalized.upper() in {"1K", "2K", "4K"}:
+            return normalized.upper()
+        
+        match = re.fullmatch(r"(\d+)\s*[xX×]\s*(\d+)", normalized)
+        if not match:
+            raise ValueError("resolution格式无效，请使用 2560x1440 这样的 宽x高 格式，或选择 1K/2K/4K")
+        
+        width = int(match.group(1))
+        height = int(match.group(2))
+        if width <= 0 or height <= 0:
+            raise ValueError(f"resolution尺寸必须为正整数，当前为 {width}x{height}")
+        
+        total_pixels = width * height
+        if total_pixels < self.MIN_TOTAL_PIXELS or total_pixels > self.MAX_TOTAL_PIXELS:
+            raise ValueError(
+                f"resolution总像素需在 {self.MIN_TOTAL_PIXELS} 到 {self.MAX_TOTAL_PIXELS} 之间，"
+                f"当前 {width}x{height}={total_pixels}"
+            )
+        
+        aspect_ratio = width / height
+        if aspect_ratio < self.MIN_ASPECT_RATIO or aspect_ratio > self.MAX_ASPECT_RATIO:
+            raise ValueError(
+                f"resolution宽高比需在 1/16 到 16 之间，当前 {width}:{height}={aspect_ratio:.4f}"
+            )
+        
+        return f"{width}x{height}"
+    
+    def download_image_from_url(self, url):
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            image = Image.open(io.BytesIO(response.content))
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            return self.pil_to_tensor(image)
+        except Exception as e:
+            raise ValueError(f"图片生成失败：无法下载或解析生成图片 {url}: {e}") from e
+    
+    def generate_images_v2(self, prompt, model, resolution,
+                           sequential_image_generation, max_images, response_format,
+                           watermark, stream, base_url, use_local_images, seed,
+                           enable_auto_retry,
+                           image1=None, image2=None, image3=None, image4=None, image5=None):
+        return super().generate_images(
+            prompt, model, resolution,
+            sequential_image_generation, max_images, response_format,
+            watermark, stream, base_url, use_local_images, seed, enable_auto_retry,
+            image1, image2, image3, image4, image5
+        )
 
 class SeedreamImageGenerateWithWebSearch(SeedreamImageGenerate):
     """
@@ -1379,6 +1549,7 @@ class TOSUploadVideoURL:
 # Node mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
     "SeedreamImageGenerate": SeedreamImageGenerate,
+    "SeedreamImageGenerateV2": SeedreamImageGenerateV2,
     "SeedreamImageGenerateWithWebSearch": SeedreamImageGenerateWithWebSearch,
     "SeedanceVideoGenerate": SeedanceVideoGenerate,
     "TOSUploadVideoURL": TOSUploadVideoURL
@@ -1386,6 +1557,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SeedreamImageGenerate": "Seedream Image Generate",
+    "SeedreamImageGenerateV2": "Seedream Image Generate V2",
     "SeedreamImageGenerateWithWebSearch": "Seedream Image Generate With Web Search",
     "SeedanceVideoGenerate": "Seedance Video Generate",
     "TOSUploadVideoURL": "TOS Upload Video URL"
