@@ -674,30 +674,6 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
     Seedream image generation node using direct resolution input.
     """
     
-    CUSTOM_RESOLUTION_OPTION = "输入自定义分辨率..."
-    COMMON_RESOLUTIONS = [
-        "1K",
-        "2K",
-        "4K",
-        "2560x1440",
-        "1440x2560",
-        "2048x2048",
-        "2304x1728",
-        "1728x2304",
-        "2496x1664",
-        "1664x2496",
-        "3200x2000",
-        "2000x3200",
-        "3024x1296",
-        "3072x2048",
-        "2048x3072",
-        "3840x2160",
-        "2160x3840",
-        "4096x2160",
-        "2160x4096",
-        "4096x4096",
-        CUSTOM_RESOLUTION_OPTION,
-    ]
     MIN_TOTAL_PIXELS = 2560 * 1440
     MAX_TOTAL_PIXELS = 4096 * 4096
     MIN_ASPECT_RATIO = 1 / 16
@@ -715,9 +691,19 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
                 "model": (["doubao-seedream-4-0-250828", "doubao-seedream-4-5-251128", "doubao-seedream-5-0-260128"], {
                     "default": "doubao-seedream-4-0-250828"
                 }),
-                "resolution": (cls.COMMON_RESOLUTIONS, {
-                    "default": "2K",
-                    "tooltip": "直接传给API的分辨率。可从列表选择，或选择“输入自定义分辨率...”后输入如 2560x1440；支持1K/2K/4K档位"
+                "width": ("INT", {
+                    "default": 2048,
+                    "min": 1,
+                    "max": 4096,
+                    "step": 1,
+                    "tooltip": "生成图片宽度。最终会与height组合成 widthxheight 传给API"
+                }),
+                "height": ("INT", {
+                    "default": 2048,
+                    "min": 1,
+                    "max": 4096,
+                    "step": 1,
+                    "tooltip": "生成图片高度。总像素需在2560x1440到4096x4096之间，宽高比需在1/16到16之间"
                 }),
                 "sequential_image_generation": (["auto", "enabled", "disabled"], {
                     "default": "auto",
@@ -777,15 +763,9 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
     
     def _resolve_size(self, resolution):
         normalized = str(resolution).strip()
-        if normalized == self.CUSTOM_RESOLUTION_OPTION:
-            raise ValueError("请选择“输入自定义分辨率...”后填写实际尺寸，例如 2560x1440")
-        
-        if normalized.upper() in {"1K", "2K", "4K"}:
-            return normalized.upper()
-        
         match = re.fullmatch(r"(\d+)\s*[xX×]\s*(\d+)", normalized)
         if not match:
-            raise ValueError("resolution格式无效，请使用 2560x1440 这样的 宽x高 格式，或选择 1K/2K/4K")
+            raise ValueError("resolution格式无效，内部组合值应为 2560x1440 这样的 宽x高 格式")
         
         width = int(match.group(1))
         height = int(match.group(2))
@@ -818,11 +798,12 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
         except Exception as e:
             raise ValueError(f"图片生成失败：无法下载或解析生成图片 {url}: {e}") from e
     
-    def generate_images_v2(self, prompt, model, resolution,
+    def generate_images_v2(self, prompt, model, width, height,
                            sequential_image_generation, max_images, response_format,
                            watermark, stream, base_url, use_local_images, seed,
                            enable_auto_retry,
                            image1=None, image2=None, image3=None, image4=None, image5=None):
+        resolution = f"{width}x{height}"
         return super().generate_images(
             prompt, model, resolution,
             sequential_image_generation, max_images, response_format,
