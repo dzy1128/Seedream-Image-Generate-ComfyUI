@@ -674,6 +674,7 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
     Seedream image generation node using direct resolution input.
     """
     
+    CUSTOM_RESOLUTION_OPTION = "输入自定义分辨率..."
     COMMON_RESOLUTIONS = [
         "1K",
         "2K",
@@ -695,6 +696,7 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
         "4096x2160",
         "2160x4096",
         "4096x4096",
+        CUSTOM_RESOLUTION_OPTION,
     ]
     MIN_TOTAL_PIXELS = 2560 * 1440
     MAX_TOTAL_PIXELS = 4096 * 4096
@@ -715,8 +717,7 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
                 }),
                 "resolution": (cls.COMMON_RESOLUTIONS, {
                     "default": "2K",
-                    "allow_custom": True,
-                    "tooltip": "直接传给API的分辨率。可从列表选择，也可手动输入如 2560x1440；支持1K/2K/4K档位"
+                    "tooltip": "直接传给API的分辨率。可从列表选择，或选择“输入自定义分辨率...”后输入如 2560x1440；支持1K/2K/4K档位"
                 }),
                 "sequential_image_generation": (["auto", "enabled", "disabled"], {
                     "default": "auto",
@@ -776,6 +777,9 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
     
     def _resolve_size(self, resolution):
         normalized = str(resolution).strip()
+        if normalized == self.CUSTOM_RESOLUTION_OPTION:
+            raise ValueError("请选择“输入自定义分辨率...”后填写实际尺寸，例如 2560x1440")
+        
         if normalized.upper() in {"1K", "2K", "4K"}:
             return normalized.upper()
         
