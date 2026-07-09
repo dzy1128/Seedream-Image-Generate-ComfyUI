@@ -30,8 +30,8 @@ class SeedreamImageGenerate:
                     "default": "",
                     "placeholder": "Enter your image generation prompt here..."
                 }),
-                "model": (["doubao-seedream-4-0-250828", "doubao-seedream-4-5-251128", "doubao-seedream-5-0-260128"], {
-                    "default": "doubao-seedream-4-0-250828"
+                "model": (["doubao-seedream-4-0-250828", "doubao-seedream-4-5-251128", "doubao-seedream-5-0-260128", "doubao-seedream-5-0-pro-260628"], {
+                    "default": "doubao-seedream-5-0-pro-260628"
                 }),
                 "aspect_ratio": (["1:1", "2:3", "3:2", "4:3", "3:4", "16:9", "9:16", "10:16", "16:10", "21:9", "2K", "3K", "3.5K", "4K"], {
                     "default": "1:1"
@@ -225,7 +225,7 @@ class SeedreamImageGenerate:
         }
         return ratio_map.get(aspect_ratio, "2048x2048")
     
-    def _resolve_size(self, size_input):
+    def _resolve_size(self, size_input, model=None):
         """Resolve node size input into API size parameter"""
         return self.aspect_ratio_to_size(size_input)
     
@@ -348,7 +348,7 @@ class SeedreamImageGenerate:
                 image_urls.append(url)
                 
             # Convert size input to API size parameter
-            size = self._resolve_size(aspect_ratio)
+            size = self._resolve_size(aspect_ratio, model)
             
             # Prepare generation options
             # 使用SDK的SequentialImageGenerationOptions类
@@ -638,6 +638,16 @@ class SeedreamImageGenerate:
                     "   • 建议使用较小的seed值以避免此警告",
                     ""
                 ])
+            elif "resolution" in error_msg and ("总像素" in error_msg or "宽高比" in error_msg or "格式无效" in error_msg):
+                error_text_parts.extend([
+                    "🚨 分辨率参数问题:",
+                    "   • 不同 Seedream 模型的输出尺寸范围不同",
+                    "   • Seedream 5.0 Pro 支持较小分辨率：总像素 1280x720 到 2048x2048",
+                    "   • Seedream 5.0 Lite / 4.5 支持：总像素 2560x1440 到 4096x4096",
+                    "   • Seedream 4.0 支持：总像素 1280x720 到 4096x4096",
+                    "   • 宽高比仍需保持在 1/16 到 16 之间",
+                    ""
+                ])
             
             error_text_parts.extend([
                 f"📝 提示词: {prompt}",
@@ -678,6 +688,12 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
     MAX_TOTAL_PIXELS = 4096 * 4096
     MIN_ASPECT_RATIO = 1 / 16
     MAX_ASPECT_RATIO = 16
+    MODEL_TOTAL_PIXEL_LIMITS = {
+        "doubao-seedream-5-0-pro-260628": ((1280 * 720), (2048 * 2048), "1280x720", "2048x2048"),
+        "doubao-seedream-5-0-260128": ((2560 * 1440), (4096 * 4096), "2560x1440", "4096x4096"),
+        "doubao-seedream-4-5-251128": ((2560 * 1440), (4096 * 4096), "2560x1440", "4096x4096"),
+        "doubao-seedream-4-0-250828": ((1280 * 720), (4096 * 4096), "1280x720", "4096x4096"),
+    }
     
     @classmethod
     def INPUT_TYPES(cls):
@@ -688,8 +704,8 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
                     "default": "",
                     "placeholder": "Enter your image generation prompt here..."
                 }),
-                "model": (["doubao-seedream-4-0-250828", "doubao-seedream-4-5-251128", "doubao-seedream-5-0-260128"], {
-                    "default": "doubao-seedream-4-0-250828"
+                "model": (["doubao-seedream-4-0-250828", "doubao-seedream-4-5-251128", "doubao-seedream-5-0-260128", "doubao-seedream-5-0-pro-260628"], {
+                    "default": "doubao-seedream-5-0-pro-260628"
                 }),
                 "width": ("INT", {
                     "default": 2048,
@@ -703,7 +719,7 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
                     "min": 1,
                     "max": 4096,
                     "step": 1,
-                    "tooltip": "生成图片高度。总像素需在2560x1440到4096x4096之间，宽高比需在1/16到16之间"
+                    "tooltip": "生成图片高度。总像素范围随模型变化：5.0 Pro为1280x720到2048x2048；5.0 Lite/4.5为2560x1440到4096x4096；4.0为1280x720到4096x4096"
                 }),
                 "sequential_image_generation": (["auto", "enabled", "disabled"], {
                     "default": "auto",
@@ -761,21 +777,29 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
     def _raise_when_no_output_tensor(self):
         return True
     
-    def _resolve_size(self, resolution):
+    def _get_total_pixel_limits(self, model):
+        return self.MODEL_TOTAL_PIXEL_LIMITS.get(
+            model,
+            (self.MIN_TOTAL_PIXELS, self.MAX_TOTAL_PIXELS, "2560x1440", "4096x4096")
+        )
+    
+    def _resolve_size(self, resolution, model=None):
         normalized = str(resolution).strip()
         match = re.fullmatch(r"(\d+)\s*[xX×]\s*(\d+)", normalized)
         if not match:
-            raise ValueError("resolution格式无效，内部组合值应为 2560x1440 这样的 宽x高 格式")
+            raise ValueError("resolution格式无效，内部组合值应为 1280x720 或 2048x2048 这样的 宽x高 格式")
         
         width = int(match.group(1))
         height = int(match.group(2))
         if width <= 0 or height <= 0:
             raise ValueError(f"resolution尺寸必须为正整数，当前为 {width}x{height}")
         
+        min_total_pixels, max_total_pixels, min_label, max_label = self._get_total_pixel_limits(model)
         total_pixels = width * height
-        if total_pixels < self.MIN_TOTAL_PIXELS or total_pixels > self.MAX_TOTAL_PIXELS:
+        if total_pixels < min_total_pixels or total_pixels > max_total_pixels:
             raise ValueError(
-                f"resolution总像素需在 {self.MIN_TOTAL_PIXELS} 到 {self.MAX_TOTAL_PIXELS} 之间，"
+                f"模型 {model or '未知'} 的 resolution 总像素需在 {min_total_pixels} ({min_label}) "
+                f"到 {max_total_pixels} ({max_label}) 之间，"
                 f"当前 {width}x{height}={total_pixels}"
             )
         
