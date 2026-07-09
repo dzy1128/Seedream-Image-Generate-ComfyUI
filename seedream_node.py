@@ -21,6 +21,8 @@ class SeedreamImageGenerate:
     A ComfyUI node for generating images using Volcengine Seedream API
     """
     
+    SEEDREAM_5_PRO_MODEL = "doubao-seedream-5-0-pro-260628"
+    
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -235,6 +237,12 @@ class SeedreamImageGenerate:
     def _raise_when_no_output_tensor(self):
         return False
     
+    def _model_supports_sequential_image_generation(self, model):
+        return model != self.SEEDREAM_5_PRO_MODEL
+    
+    def _model_supports_stream(self, model):
+        return model != self.SEEDREAM_5_PRO_MODEL
+    
     def download_image_from_url(self, url):
         """Download image from URL and convert to tensor"""
         try:
@@ -350,23 +358,33 @@ class SeedreamImageGenerate:
             # Convert size input to API size parameter
             size = self._resolve_size(aspect_ratio, model)
             
-            # Prepare generation options
-            # 使用SDK的SequentialImageGenerationOptions类
-            # 对应官方API: {"max_images": int}
-            generation_options = SequentialImageGenerationOptions(max_images=max_images)
-            print(f"🔄 顺序生成选项: max_images={max_images}")
+            supports_sequential_image_generation = self._model_supports_sequential_image_generation(model)
+            supports_stream = self._model_supports_stream(model)
+            effective_stream = stream if supports_stream else False
             
             # Generate images - 根据是否有图片输入来决定参数
             generate_params = {
                 "model": model,
                 "prompt": prompt,
                 "size": size,
-                "sequential_image_generation": sequential_image_generation,
-                "sequential_image_generation_options": generation_options,
                 "response_format": response_format,
-                "watermark": watermark,
-                "stream": stream
+                "watermark": watermark
             }
+            
+            if supports_sequential_image_generation:
+                # 使用SDK的SequentialImageGenerationOptions类
+                # 对应官方API: {"max_images": int}
+                generation_options = SequentialImageGenerationOptions(max_images=max_images)
+                generate_params["sequential_image_generation"] = sequential_image_generation
+                generate_params["sequential_image_generation_options"] = generation_options
+                print(f"🔄 顺序生成选项: max_images={max_images}")
+            else:
+                print(f"ℹ️ 模型 {model} 不支持 sequential_image_generation，已忽略顺序生成参数")
+            
+            if supports_stream:
+                generate_params["stream"] = stream
+            elif stream:
+                print(f"ℹ️ 模型 {model} 不支持 stream，已改为非流式请求")
             
             # 只有在有图片输入时才添加image参数
             if image_urls:
@@ -377,9 +395,9 @@ class SeedreamImageGenerate:
             
             print(f"📤 发送API请求")
             print(f"   模型: {model}")
-            print(f"   顺序生成: {sequential_image_generation}")
-            print(f"   顺序生成选项: max_images={max_images}")
-            print(f"   stream: {stream}")
+            print(f"   顺序生成: {sequential_image_generation if supports_sequential_image_generation else '不支持，已忽略'}")
+            print(f"   顺序生成选项: max_images={max_images if supports_sequential_image_generation else 'N/A'}")
+            print(f"   stream: {effective_stream}")
             print(f"   图片输入数: {len(image_urls) if image_urls else 0}")
             
             # 打印API参数摘要（不打印完整参数，避免序列化问题）
@@ -388,7 +406,7 @@ class SeedreamImageGenerate:
             print(f"   - size: {size}")
             print(f"   - response_format: {response_format}")
             print(f"   - watermark: {watermark}")
-            print(f"   - stream: {stream}")
+            print(f"   - stream: {effective_stream}")
             print(f"   - 有图片输入: {len(image_urls) > 0 if image_urls else False}")
             
             extra_params = self._get_additional_generate_params()
@@ -401,7 +419,7 @@ class SeedreamImageGenerate:
             # 处理流式响应
             all_image_data = []
             event_count = 0  # 在外部初始化，用于错误报告
-            if stream:
+            if effective_stream:
                 print(f"🌊 流式响应模式，正在收集所有图片...")
                 try:
                     # 根据官方示例，流式响应返回的是event对象迭代器
@@ -478,8 +496,8 @@ class SeedreamImageGenerate:
             
             if not all_image_data:
                 error_detail = f"API未返回任何图片数据\n"
-                error_detail += f"  - stream模式: {stream}\n"
-                if stream:
+                error_detail += f"  - stream模式: {effective_stream}\n"
+                if effective_stream:
                     error_detail += f"  - 收到event数: {event_count}\n"
                 error_detail += f"  - 响应类型: {type(images_response)}\n"
                 error_detail += f"\n💡 可能的原因:\n"
@@ -498,8 +516,11 @@ class SeedreamImageGenerate:
             result_info.append(f"📝 提示词: {prompt}")
             result_info.append(f"🔧 模型: {model}")
             result_info.append(f"📐 {self._size_result_label()}: {aspect_ratio}")
-            result_info.append(f"🔄 顺序生成: {sequential_image_generation}")
-            result_info.append(f"   └─ max_images: {max_images} (sequential_image_generation_options)")
+            if supports_sequential_image_generation:
+                result_info.append(f"🔄 顺序生成: {sequential_image_generation}")
+                result_info.append(f"   └─ max_images: {max_images} (sequential_image_generation_options)")
+            else:
+                result_info.append("🔄 顺序生成: 当前模型不支持，已忽略")
             result_info.append(f"🖼️ 生成数量: {len(all_image_data)}")
             input_image_count = len([img for img in [image1, image2, image3, image4, image5] if img is not None])
             result_info.append(f"📊 输入图像: {input_image_count}张" + (" (文生图模式)" if input_image_count == 0 else " (图生图模式)"))
@@ -552,7 +573,7 @@ class SeedreamImageGenerate:
             result_info.append("⚙️ 生成参数:")
             result_info.append(f"   🎯 响应格式: {response_format}")
             result_info.append(f"   💧 水印: {'是' if watermark else '否'}")
-            result_info.append(f"   🌊 流式传输: {'是' if stream else '否'}")
+            result_info.append(f"   🌊 流式传输: {'是' if effective_stream else '否'}" + (" (当前模型不支持，已忽略)" if stream and not supports_stream else ""))
             result_info.append(f"   🌐 API地址: {base_url}")
             
             if not output_tensors:
