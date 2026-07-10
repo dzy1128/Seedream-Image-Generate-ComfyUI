@@ -709,6 +709,7 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
     MAX_TOTAL_PIXELS = 4096 * 4096
     MIN_ASPECT_RATIO = 1 / 16
     MAX_ASPECT_RATIO = 16
+    MAX_DIMENSION = 16384
     MODEL_TOTAL_PIXEL_LIMITS = {
         "doubao-seedream-5-0-pro-260628": ((1280 * 720), (2048 * 2048), "1280x720", "2048x2048"),
         "doubao-seedream-5-0-260128": ((2560 * 1440), (4096 * 4096), "2560x1440", "4096x4096"),
@@ -731,16 +732,16 @@ class SeedreamImageGenerateV2(SeedreamImageGenerate):
                 "width": ("INT", {
                     "default": 2048,
                     "min": 1,
-                    "max": 4096,
+                    "max": cls.MAX_DIMENSION,
                     "step": 1,
-                    "tooltip": "生成图片宽度。最终会与height组合成 widthxheight 传给API"
+                    "tooltip": "生成图片宽度。最终会与height组合成 widthxheight 传给API；上限按总像素和宽高比校验，不按单边4096限制"
                 }),
                 "height": ("INT", {
                     "default": 2048,
                     "min": 1,
-                    "max": 4096,
+                    "max": cls.MAX_DIMENSION,
                     "step": 1,
-                    "tooltip": "生成图片高度。总像素范围随模型变化：5.0 Pro为1280x720到2048x2048；5.0 Lite/4.5为2560x1440到4096x4096；4.0为1280x720到4096x4096"
+                    "tooltip": "生成图片高度。单边可超过4096；总像素范围随模型变化：5.0 Pro为1280x720到2048x2048；5.0 Lite/4.5为2560x1440到4096x4096；4.0为1280x720到4096x4096"
                 }),
                 "sequential_image_generation": (["auto", "enabled", "disabled"], {
                     "default": "auto",
